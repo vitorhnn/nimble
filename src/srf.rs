@@ -1,12 +1,15 @@
 use md5::{Digest, Md5};
+use rayon::prelude::*;
 use relative_path::RelativePathBuf;
 use serde::{Deserialize, Deserializer, Serialize};
-use snafu::{OptionExt, ResultExt, Whatever};
+use snafu::{OptionExt, ResultExt, Snafu, Whatever};
 use std::io::{BufReader, Seek, SeekFrom};
 use std::{
+    io,
     io::{BufRead, Read},
     path::Path,
 };
+use walkdir::WalkDir;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "PascalCase")]
@@ -23,6 +26,14 @@ pub enum FileType {
     File,
     #[serde(rename = "SwiftyPboFile")]
     Pbo,
+}
+
+#[derive(Debug, Snafu)]
+pub enum Error {
+    #[snafu(display("io error: {}", source))]
+    Io { source: io::Error },
+    #[snafu(display("pbo error: {}", source))]
+    Pbo { source: crate::pbo::Error },
 }
 
 impl FileType {
@@ -73,28 +84,27 @@ impl Mod {
     }
 }
 
-fn generate_hash(file: &mut BufReader<std::fs::File>, len: u64) -> Result<String, Whatever> {
+fn generate_hash(file: &mut BufReader<std::fs::File>, len: u64) -> Result<String, Error> {
     let mut hasher = Md5::new();
     let mut stream = file.take(len);
 
-    std::io::copy(&mut stream, &mut hasher).with_whatever_context(|_| "hashing failure")?;
+    std::io::copy(&mut stream, &mut hasher).context(IoSnafu {})?;
 
     let hash = hasher.finalize();
 
     Ok(format!("{:X}", hash))
 }
 
-pub fn scan_pbo(path: &Path, base_path: &Path) -> Result<File, Whatever> {
-    let mut file = BufReader::new(
-        std::fs::File::open(&path).with_whatever_context(|_| "failed to open file")?,
-    );
+pub fn scan_pbo(path: &Path, base_path: &Path) -> Result<File, Error> {
+    let mut file = BufReader::new(std::fs::File::open(&path).context(IoSnafu {})?);
 
     let mut parts = Vec::new();
-    let pbo = crate::pbo::Pbo::read(&mut file)?;
+    dbg!("scan pbo {}", path);
+    let pbo = crate::pbo::Pbo::read(&mut file).context(PboSnafu {})?;
     let mut offset = 0;
 
-    let length = pbo.input.seek(SeekFrom::End(0)).unwrap();
-    pbo.input.seek(SeekFrom::Start(0)).unwrap();
+    let length = pbo.input.seek(SeekFrom::End(0)).context(IoSnafu {})?;
+    pbo.input.seek(SeekFrom::Start(0)).context(IoSnafu {})?;
 
     {
         let header_hash = generate_hash(pbo.input, pbo.header_len)?;
@@ -156,14 +166,11 @@ pub fn scan_pbo(path: &Path, base_path: &Path) -> Result<File, Whatever> {
     })
 }
 
-pub fn scan_file(path: &Path, base_path: &Path) -> Result<File, Whatever> {
-    let file = std::fs::File::open(&path).with_whatever_context(|_| "failed to open file")?;
+pub fn scan_file(path: &Path, base_path: &Path) -> Result<File, Error> {
+    let file = std::fs::File::open(&path).context(IoSnafu {})?;
     let mut parts = Vec::new();
 
-    let file_len = file
-        .metadata()
-        .with_whatever_context(|_| "failed to acquire file metadata")?
-        .len();
+    let file_len = file.metadata().context(IoSnafu {})?.len();
 
     let mut reader = std::io::BufReader::new(file);
     let mut pos = 0;
@@ -173,8 +180,7 @@ pub fn scan_file(path: &Path, base_path: &Path) -> Result<File, Whatever> {
         let mut stream = reader.by_ref().take(5000000);
 
         let pre_copy_pos = pos;
-        let copied = std::io::copy(&mut stream, &mut hasher)
-            .with_whatever_context(|_| "failed to io copy into hasher")?;
+        let copied = std::io::copy(&mut stream, &mut hasher).context(IoSnafu {})?;
         pos += copied;
 
         let hash = hasher.finalize();
@@ -214,40 +220,44 @@ pub fn scan_file(path: &Path, base_path: &Path) -> Result<File, Whatever> {
     })
 }
 
-fn recurse(path: &Path, base_path: &Path) -> Result<Vec<File>, Whatever> {
+fn recurse(path: &Path, base_path: &Path) -> Result<Vec<File>, Error> {
     println!("recursing into {:#?}", &path);
-    let entries = path
-        .read_dir()
-        .with_whatever_context(|_| "failed to read directory entries")?;
 
-    let mut files = Vec::new();
+    let entries: Vec<_> = WalkDir::new(path)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            // someday this spaghetti can just be replaced by Option::contains
+            if let Some(is_dir) = e
+                .metadata()
+                .ok()
+                .and_then(|metadata| Some(metadata.is_dir()))
+            {
+                !is_dir
+            } else {
+                false
+            }
+        })
+        .map(|entry| entry.path().to_owned())
+        .collect();
 
-    for entry in entries {
-        let entry = entry.with_whatever_context(|_| "failed to read directory entry")?;
+    let files: Result<Vec<_>, _> = entries
+        .par_iter()
+        .map(|path| {
+            let extension = path.extension();
 
-        let metadata = entry
-            .metadata()
-            .with_whatever_context(|_| "failed to read direntry metadata")?;
-        let path = entry.path();
+            match extension {
+                Some(extension) if extension == "pbo" => scan_pbo(&path, base_path),
+                _ => scan_file(&path, base_path),
+            }
+        })
+        .collect();
 
-        if metadata.is_dir() {
-            files.append(&mut recurse(&path, base_path)?);
-            continue;
-        }
-
-        let extension = path.extension();
-
-        match extension {
-            Some(extension) if extension == "pbo" => files.push(scan_pbo(&path, base_path)?),
-            _ => files.push(scan_file(&path, base_path)?),
-        }
-    }
-
-    Ok(files)
+    Ok(files?)
 }
 
 // FIXME: ditch whatever errors
-pub fn scan_mod(path: &Path) -> Result<Mod, Whatever> {
+pub fn scan_mod(path: &Path) -> Result<Mod, Error> {
     let mut files = recurse(path, path)?;
 
     files.sort_by(|a, b| {
@@ -403,7 +413,9 @@ fn read_legacy_srf_file(
 
 pub fn deserialize_legacy_srf<I: BufRead + Seek>(input: &mut I) -> Result<Mod, Whatever> {
     // swifty's legacy srf format is stateful
-    input.seek(SeekFrom::Start(0)).with_whatever_context(|_| "failed to rewind file")?;
+    input
+        .seek(SeekFrom::Start(0))
+        .with_whatever_context(|_| "failed to rewind file")?;
     let mut files = Vec::<File>::new();
 
     let mut iter = input.lines().map(|line| line.expect("input.lines failed"));
@@ -429,6 +441,7 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
+    /*
     #[test]
     fn legacy_srf_test() {
         let input = include_bytes!("mod.srf");
@@ -436,4 +449,5 @@ mod tests {
         let deserialized = deserialize_legacy_srf(&mut cursor).unwrap();
         dbg!(deserialized);
     }
+     */
 }

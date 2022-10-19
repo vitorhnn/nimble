@@ -78,14 +78,11 @@ pub fn replicate_remote_repo_info(remote: &Repository) -> Repository {
     }
 }
 
-pub fn get_repository_info<'a>(
-    agent: &'a mut ureq::Agent,
-    url: &'a str,
-) -> Result<Repository, Error<'a>> {
+pub fn get_repository_info<'a>(agent: &'a mut ureq::Agent, url: &'a str) -> Result<Repository, Error<'a>> {
     agent
         .get(url)
         .call()
         .context(HttpSnafu { url })?
         .into_json()
-        .context(DeserializationSnafu {})
+        .context(DeserializationSnafu)
 }

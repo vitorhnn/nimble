@@ -15,4 +15,6 @@ byteorder = "1"
 ureq = { version = "2", features = ["tls", "json"] }
 relative-path = { version = "1", features = ["serde"] }
 clap = { version = "3", features = ["derive"] }
+rayon = "1"
+walkdir = "2"
 # tinyvec = { version = "1.5", features = ["alloc", "rustc_1_55"] }
