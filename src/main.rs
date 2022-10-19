@@ -5,11 +5,10 @@ use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 
+mod commands;
 mod pbo;
 mod repository;
 mod srf;
-mod commands;
-
 
 #[derive(Subcommand)]
 enum Commands {
@@ -19,6 +18,10 @@ enum Commands {
 
         #[clap(short, long)]
         local_path: PathBuf,
+    },
+    GenSrf {
+        #[clap(short, long)]
+        path: PathBuf,
     },
 }
 
@@ -40,5 +43,6 @@ fn main() {
             repo_url,
             local_path,
         } => commands::sync::sync(&mut agent, &repo_url, &local_path),
+        Commands::GenSrf { path } => commands::gen_srf::gen_srf(&path),
     }
 }

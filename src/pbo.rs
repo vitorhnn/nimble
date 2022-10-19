@@ -5,12 +5,11 @@ use std::{
 };
 
 use byteorder::{LittleEndian, ReadBytesExt};
-use snafu::{ResultExt, Whatever};
+use snafu::{ResultExt, Snafu, Whatever};
 
 #[derive(Debug)]
 pub struct Pbo<I: BufRead + Seek> {
     pub input: I,
-    pub header: PboEntry,
     pub header_len: u64,
     pub extensions: HashMap<String, String>,
     pub entries: Vec<PboEntry>,
@@ -34,12 +33,16 @@ pub struct PboEntry {
     pub data_size: u32,
 }
 
-fn read_string<I: BufRead + Seek>(input: &mut I) -> Result<String, Whatever> {
+#[derive(Debug, Snafu)]
+pub enum Error {
+    #[snafu(display("io error: {}", source))]
+    Io { source: std::io::Error },
+}
+
+fn read_string<I: BufRead + Seek>(input: &mut I) -> Result<String, Error> {
     let mut buf = Vec::new();
 
-    input
-        .read_until(b'\0', &mut buf)
-        .with_whatever_context(|_| "read failure")?;
+    input.read_until(b'\0', &mut buf).context(IoSnafu {})?;
 
     let str = unsafe { CStr::from_bytes_with_nul_unchecked(&buf) }.to_string_lossy();
 
@@ -47,12 +50,10 @@ fn read_string<I: BufRead + Seek>(input: &mut I) -> Result<String, Whatever> {
 }
 
 impl PboEntry {
-    fn read<I: BufRead + Seek>(input: &mut I) -> Result<Self, Whatever> {
+    fn read<I: BufRead + Seek>(input: &mut I) -> Result<Self, Error> {
         let filename = read_string(input)?;
 
-        let r#type = input
-            .read_u32::<LittleEndian>()
-            .with_whatever_context(|_| "read failure")?;
+        let r#type = input.read_u32::<LittleEndian>().context(IoSnafu {})?;
 
         let r#type = match r#type {
             0x56657273 => EntryType::Vers,
@@ -62,18 +63,10 @@ impl PboEntry {
             _ => panic!(),
         };
 
-        let original_size = input
-            .read_u32::<LittleEndian>()
-            .with_whatever_context(|_| "read failure")?;
-        let offset = input
-            .read_u32::<LittleEndian>()
-            .with_whatever_context(|_| "read failure")?;
-        let timestamp = input
-            .read_u32::<LittleEndian>()
-            .with_whatever_context(|_| "read failure")?;
-        let data_size = input
-            .read_u32::<LittleEndian>()
-            .with_whatever_context(|_| "read failure")?;
+        let original_size = input.read_u32::<LittleEndian>().context(IoSnafu {})?;
+        let offset = input.read_u32::<LittleEndian>().context(IoSnafu {})?;
+        let timestamp = input.read_u32::<LittleEndian>().context(IoSnafu {})?;
+        let data_size = input.read_u32::<LittleEndian>().context(IoSnafu {})?;
 
         Ok(PboEntry {
             filename,
@@ -86,7 +79,7 @@ impl PboEntry {
     }
 }
 
-fn read_extensions<I: BufRead + Seek>(input: &mut I) -> Result<HashMap<String, String>, Whatever> {
+fn read_extensions<I: BufRead + Seek>(input: &mut I) -> Result<HashMap<String, String>, Error> {
     let mut output_map = HashMap::new();
 
     loop {
@@ -103,14 +96,8 @@ fn read_extensions<I: BufRead + Seek>(input: &mut I) -> Result<HashMap<String, S
 }
 
 impl<I: BufRead + Seek> Pbo<I> {
-    pub fn read(mut input: I) -> Result<Self, Whatever> {
-        let header = PboEntry::read(&mut input)?;
-
-        if !header.filename.is_empty() || header.r#type != EntryType::Vers {
-            panic!();
-        }
-
-        let extensions = read_extensions(&mut input)?;
+    pub fn read(mut input: I) -> Result<Self, Error> {
+        let mut extensions = HashMap::new();
 
         let mut entries = Vec::new();
 
@@ -121,6 +108,10 @@ impl<I: BufRead + Seek> Pbo<I> {
                 break;
             }
 
+            if entry.r#type == EntryType::Vers {
+                extensions = read_extensions(&mut input)?;
+            }
+
             entries.push(entry);
         }
 
@@ -128,7 +119,6 @@ impl<I: BufRead + Seek> Pbo<I> {
 
         Ok(Pbo {
             input,
-            header,
             header_len,
             extensions,
             entries,

@@ -1,9 +1,9 @@
+use crate::{repository, srf};
+use snafu::{ResultExt, Whatever};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
-use snafu::{ResultExt, Whatever};
-use crate::{srf, repository};
 
 fn diff_repos<'a>(
     local_repo: &repository::Repository,
@@ -140,7 +140,7 @@ fn execute_command_list(
     commands: &[DownloadCommand],
 ) {
     for (i, command) in commands.iter().enumerate() {
-        println!("downloading {} of {}", i, commands.len());
+        println!("downloading {} of {} - {}", i, commands.len(), command.file);
 
         let file_path = local_base.join(Path::new(&command.file));
         std::fs::create_dir_all(file_path.parent().unwrap()).unwrap();
@@ -159,7 +159,7 @@ pub fn sync(agent: &mut ureq::Agent, repo_url: &str, base_path: &Path) {
         repository::get_repository_info(agent, &format!("{}/repo.json", repo_url)).unwrap();
 
     let local_repo: repository::Repository = {
-        let file = std::fs::File::open(base_path.join("./repo.json"));
+        let file = File::open(base_path.join("./repo.json"));
 
         match file {
             Err(e) => {
@@ -187,4 +187,3 @@ pub fn sync(agent: &mut ureq::Agent, repo_url: &str, base_path: &Path) {
 
     execute_command_list(agent, repo_url, base_path, &download_commands);
 }
-
