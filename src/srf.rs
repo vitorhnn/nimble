@@ -119,7 +119,7 @@ pub fn scan_pbo(path: &Path, base_path: &Path) -> Result<File, Error> {
     }
 
     // swifty, as always, does very strange things
-    for entry in &pbo.entries {
+    for entry in pbo.entries.iter().skip(1) {
         let hash = generate_hash(pbo.input, entry.data_size as u64)?;
 
         parts.push(Part {
@@ -172,7 +172,7 @@ pub fn scan_file(path: &Path, base_path: &Path) -> Result<File, Error> {
 
     let file_len = file.metadata().context(IoSnafu {})?.len();
 
-    let mut reader = std::io::BufReader::new(file);
+    let mut reader = BufReader::new(file);
     let mut pos = 0;
 
     while pos < file_len {
