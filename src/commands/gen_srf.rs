@@ -9,6 +9,7 @@ pub fn gen_srf(base_path: &Path) {
     let paths: Vec<_> = WalkDir::new(base_path)
         .max_depth(1)
         .into_iter()
+        .skip(1)
         .filter_map(|e| e.ok())
         .map(|entry| entry.path().to_owned())
         .collect();
