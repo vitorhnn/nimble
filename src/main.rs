@@ -15,6 +15,9 @@ enum Commands {
 
         #[clap(short, long)]
         local_path: PathBuf,
+
+        #[clap(short, long)]
+        dry_run: bool,
     },
     GenSrf {
         #[clap(short, long)]
@@ -39,8 +42,9 @@ fn main() {
         Commands::Sync {
             repo_url,
             local_path,
+            dry_run,
         } => {
-            commands::sync::sync(&mut agent, &repo_url, &local_path).unwrap();
+            commands::sync::sync(&mut agent, &repo_url, &local_path, dry_run).unwrap();
         }
         Commands::GenSrf { path } => {
             commands::gen_srf::gen_srf(&path);

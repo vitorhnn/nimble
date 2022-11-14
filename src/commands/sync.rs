@@ -185,7 +185,7 @@ fn execute_command_list(
     Ok(())
 }
 
-pub fn sync(agent: &mut ureq::Agent, repo_url: &str, base_path: &Path) -> Result<(), Error> {
+pub fn sync(agent: &mut ureq::Agent, repo_url: &str, base_path: &Path, dry_run: bool) -> Result<(), Error> {
     let remote_repo = repository::get_repository_info(agent, &format!("{}/repo.json", repo_url))
         .context(RepositoryFetchSnafu)?;
 
@@ -218,7 +218,9 @@ pub fn sync(agent: &mut ureq::Agent, repo_url: &str, base_path: &Path) -> Result
 
     println!("download commands: {:#?}", download_commands);
 
-    execute_command_list(agent, repo_url, base_path, &download_commands)?;
+    if !dry_run {
+        execute_command_list(agent, repo_url, base_path, &download_commands)?;
+    }
 
     Ok(())
 }
