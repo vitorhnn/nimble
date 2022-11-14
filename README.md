@@ -20,6 +20,4 @@ In order of priority:
    * RelativePath and RelativePathBuf should be used in most cases.
    * We still need to convert Windows backslashes to a sane separator on *nix platforms
  * Use rayon for srf generation
- * Investigate why download speeds are kinda wonky
-   * Seems to be an issue with my connection to the repo I was using for testing?
  * Properly deal with invalid PBOs
