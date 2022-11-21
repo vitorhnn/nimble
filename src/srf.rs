@@ -480,13 +480,13 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
-    /*
     #[test]
     fn legacy_srf_test() {
-        let input = include_bytes!("mod.srf");
+        let input = include_bytes!("../test_files/legacy_format_mod.srf");
         let mut cursor = Cursor::new(input);
         let deserialized = deserialize_legacy_srf(&mut cursor).unwrap();
-        dbg!(deserialized);
+
+        assert_eq!(deserialized.name, "@lambs_danger");
+        assert_eq!(deserialized.checksum, Md5Digest::new("44C1B8021822F80E1E560689D2AAB0BF").unwrap());
     }
-     */
 }

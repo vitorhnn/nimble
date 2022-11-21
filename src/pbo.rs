@@ -130,17 +130,13 @@ impl<I: BufRead + Seek> Pbo<I> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
     use super::*;
 
     #[test]
-    fn magic_check() {
-        dbg!(Pbo::read(&mut std::io::BufReader::new(
-            std::fs::File::open(
-                "/home/vitorhnn/arma_crap/mods/@ACE/addons/ace_advanced_ballistics.pbo",
-            )
-            .unwrap(),
-        ))
-        .unwrap());
-        //Pbo::read(&mut std::io::BufReader::new(std::fs::File::open("/home/vitorhnn/arma_crap/mods/@ACE/addons/ace_advanced_ballistics.pbo.ace_3.13.6.60-8bd4922f.bisign").unwrap())).unwrap();
+    fn basic_pbo_test() {
+        let bytes = include_bytes!("../test_files/ace_advanced_ballistics.pbo");
+        let pbo = Pbo::read(Cursor::new(&bytes)).unwrap();
+        assert_eq!(pbo.entries.len(), 49);
     }
 }
