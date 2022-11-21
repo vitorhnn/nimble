@@ -1,9 +1,11 @@
 use crate::{repository, srf};
 use snafu::{ResultExt, Snafu};
+use indicatif::{ProgressBar, ProgressState, ProgressStyle};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufReader, Cursor, Read};
+use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
 use std::path::Path;
+use tempfile::tempfile;
 
 fn diff_repos<'a>(
     local_repo: &repository::Repository,
@@ -164,22 +166,39 @@ fn execute_command_list(
     for (i, command) in commands.iter().enumerate() {
         println!("downloading {} of {} - {}", i, commands.len(), command.file);
 
+        // download into temp file first in case we have a failure. this avoids us writing garbage data
+        // which will later make us crash in gen_srf
+        let mut temp_download_file = tempfile().context(IoSnafu)?;
+
+        let remote_url = format!("{}{}", remote_base, command.file);
+
+        let mut response = agent.get(&remote_url).call().context(HttpSnafu {
+            url: remote_url.clone(),
+        })?;
+
+        let mut pb = response
+            .header("Content-Length")
+            .and_then(|len| len.parse().ok())
+            .map(ProgressBar::new)
+            .unwrap_or_else(ProgressBar::new_spinner);
+
+        pb.set_style(ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+            .unwrap()
+            .with_key("eta", |state: &ProgressState, w: &mut dyn std::fmt::Write| write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap())
+            .progress_chars("#>-"));
+
+        let mut reader = response.into_reader();
+
+        std::io::copy(&mut pb.wrap_read(reader), &mut temp_download_file).context(IoSnafu)?;
+
+        // copy from temp to permanent file
         let file_path = local_base.join(Path::new(&command.file));
         std::fs::create_dir_all(file_path.parent().expect("file_path did not have a parent"))
             .context(IoSnafu)?;
         let mut local_file = File::create(&file_path).context(IoSnafu)?;
 
-        let remote_url = format!("{}{}", remote_base, command.file);
-
-        let mut reader = agent
-            .get(&remote_url)
-            .call()
-            .context(HttpSnafu {
-                url: remote_url.clone(),
-            })?
-            .into_reader();
-
-        std::io::copy(&mut reader, &mut local_file).context(IoSnafu)?;
+        temp_download_file.seek(SeekFrom::Start(0));
+        std::io::copy(&mut temp_download_file, &mut local_file).context(IoSnafu)?;
     }
 
     Ok(())
