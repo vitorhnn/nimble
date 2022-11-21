@@ -1,38 +1,13 @@
+use crate::commands::gen_srf::gen_srf_for_mod;
+use crate::mod_cache::ModCache;
 use crate::{repository, srf};
-use snafu::{ResultExt, Snafu};
 use indicatif::{ProgressBar, ProgressState, ProgressStyle};
+use snafu::{ResultExt, Snafu};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
+use std::io::{BufReader, BufWriter, Cursor, Read, Seek, SeekFrom};
 use std::path::Path;
 use tempfile::tempfile;
-
-fn diff_repos<'a>(
-    local_repo: &repository::Repository,
-    remote_repo: &'a repository::Repository,
-) -> Vec<&'a repository::Mod> {
-    let mut downloads = Vec::new();
-
-    if local_repo.checksum == remote_repo.checksum {
-        return vec![];
-    }
-
-    let mut checksum_map = HashMap::new();
-
-    for _mod in &local_repo.required_mods {
-        checksum_map.insert(&_mod.checksum, _mod);
-    }
-
-    for _mod in &remote_repo.required_mods {
-        match checksum_map.get(&_mod.checksum) {
-            None => downloads.push(_mod),
-            Some(local_mod) if local_mod.checksum != _mod.checksum => downloads.push(_mod),
-            _ => (),
-        }
-    }
-
-    downloads
-}
 
 #[derive(Debug)]
 struct DownloadCommand {
@@ -60,6 +35,24 @@ pub enum Error {
     LegacySrfDeserialization { source: srf::Error },
     #[snafu(display("Failed to generate SRF: {}", source))]
     SrfGeneration { source: srf::Error },
+}
+
+fn diff_repo<'a>(
+    mod_cache: &ModCache,
+    remote_repo: &'a repository::Repository,
+) -> Vec<&'a repository::Mod> {
+    let mut downloads = Vec::new();
+
+    // repo checksums use the repo generation timestamp in the checksum calculation, so we can't really
+    // generate them for comparison. they aren't that useful anyway
+
+    for _mod in &remote_repo.required_mods {
+        if !mod_cache.mods.contains(&_mod.checksum) {
+            downloads.push(_mod);
+        }
+    }
+
+    downloads
 }
 
 fn diff_mod(
@@ -96,7 +89,7 @@ fn diff_mod(
         if !local_path.exists() {
             srf::Mod::generate_invalid(&remote_srf)
         } else {
-            let file = File::open(&srf_path);
+            let file = File::open(srf_path);
 
             match file {
                 Ok(file) => {
@@ -204,17 +197,22 @@ fn execute_command_list(
     Ok(())
 }
 
-pub fn sync(agent: &mut ureq::Agent, repo_url: &str, base_path: &Path, dry_run: bool) -> Result<(), Error> {
+pub fn sync(
+    agent: &mut ureq::Agent,
+    repo_url: &str,
+    base_path: &Path,
+    dry_run: bool,
+) -> Result<(), Error> {
     let remote_repo = repository::get_repository_info(agent, &format!("{}/repo.json", repo_url))
         .context(RepositoryFetchSnafu)?;
 
-    let local_repo = {
-        let file = File::open(base_path.join("./repo.json"));
+    let mut mod_cache = {
+        let file = File::open(base_path.join("nimble-cache.json"));
 
         match file {
             Err(e) => {
                 if e.kind() == std::io::ErrorKind::NotFound {
-                    Ok(repository::replicate_remote_repo_info(&remote_repo))
+                    Ok(ModCache::new_empty())
                 } else {
                     return Err(Error::Io { source: e });
                 }
@@ -225,21 +223,39 @@ pub fn sync(agent: &mut ureq::Agent, repo_url: &str, base_path: &Path, dry_run: 
         }
     }?;
 
-    let check = diff_repos(&local_repo, &remote_repo);
+    let check = diff_repo(&mod_cache, &remote_repo);
 
     println!("mods to check: {:#?}", check);
 
     let mut download_commands = vec![];
 
-    for _mod in check {
+    for _mod in &check {
         download_commands.extend(diff_mod(agent, repo_url, base_path, _mod).unwrap());
     }
 
     println!("download commands: {:#?}", download_commands);
 
-    if !dry_run {
-        execute_command_list(agent, repo_url, base_path, &download_commands)?;
+    if dry_run {
+        return Ok(());
     }
+
+    let res = execute_command_list(agent, repo_url, base_path, &download_commands);
+
+    if let Err(e) = res {
+        println!("an error occured while downloading: {}", e);
+        println!("you should retry this command");
+    }
+
+    // gen_srf for the mods we downloaded
+    for _mod in &check {
+        let checksum = gen_srf_for_mod(&base_path.join(Path::new(&_mod.mod_name)));
+
+        mod_cache.update_mod_checksum(&_mod.checksum, checksum);
+    }
+
+    // reserialize the cache
+    let writer = BufWriter::new(File::create(base_path.join("nimble-cache.json")).unwrap());
+    serde_json::to_writer(writer, &mod_cache).unwrap();
 
     Ok(())
 }
