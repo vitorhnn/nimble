@@ -13,11 +13,10 @@ In order of priority:
    * Create symlinks instead of copying mod files 
 
 ## Big bucket list of things to do:
- * Switch to proper errors instead of `snafu::Whatever`
-   * There's also way too much unwrapping because I got lazy
  * Implement part level downloading, instead of redownloading entire files
  * Clean up Path vs PathBuf vs &str vs String
    * RelativePath and RelativePathBuf should be used in most cases.
    * We still need to convert Windows backslashes to a sane separator on *nix platforms
  * Use rayon for srf generation
+   * Somewhat done but needs improvement
  * Properly deal with invalid PBOs

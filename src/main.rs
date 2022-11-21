@@ -1,7 +1,4 @@
-use snafu::{ResultExt, Whatever};
-use std::fs::File;
-use std::io::{BufReader, Read};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
@@ -42,7 +39,11 @@ fn main() {
         Commands::Sync {
             repo_url,
             local_path,
-        } => commands::sync::sync(&mut agent, &repo_url, &local_path),
-        Commands::GenSrf { path } => commands::gen_srf::gen_srf(&path),
+        } => {
+            commands::sync::sync(&mut agent, &repo_url, &local_path).unwrap();
+        }
+        Commands::GenSrf { path } => {
+            commands::gen_srf::gen_srf(&path);
+        }
     }
 }

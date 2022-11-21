@@ -3,9 +3,14 @@ use snafu::prelude::*;
 use std::{fmt::Display, net::IpAddr, str::FromStr};
 
 #[derive(Debug, Snafu)]
-pub enum Error<'a> {
+pub enum Error {
     #[snafu(display("Error while requesting repository data: {}", source))]
-    Http { url: &'a str, source: ureq::Error },
+    Http {
+        url: String,
+
+        #[snafu(source(from(ureq::Error, Box::new)))]
+        source: Box<ureq::Error>,
+    },
     #[snafu(display("Error while deserializing: {}", source))]
     Deserialization { source: std::io::Error },
 }
@@ -78,7 +83,7 @@ pub fn replicate_remote_repo_info(remote: &Repository) -> Repository {
     }
 }
 
-pub fn get_repository_info<'a>(agent: &'a mut ureq::Agent, url: &'a str) -> Result<Repository, Error<'a>> {
+pub fn get_repository_info(agent: &mut ureq::Agent, url: &str) -> Result<Repository, Error> {
     agent
         .get(url)
         .call()
