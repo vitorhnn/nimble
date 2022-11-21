@@ -1,10 +1,8 @@
 use crate::mod_cache::ModCache;
-use crate::repository::Repository;
 use crate::srf;
-use crate::srf::Mod;
 use rayon::prelude::*;
 use std::collections::HashSet;
-use std::fs::{File, FileType};
+use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
 use walkdir::WalkDir;

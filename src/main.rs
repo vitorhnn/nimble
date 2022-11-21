@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use crate::commands::gen_srf::gen_srf_for_mod;
 
 mod commands;
 mod mod_cache;
