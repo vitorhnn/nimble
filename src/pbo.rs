@@ -135,7 +135,7 @@ mod tests {
 
     #[test]
     fn basic_pbo_test() {
-        let bytes = include_bytes!("../test_files/ace_advanced_ballistics.pbo");
+        let bytes = include_bytes!("../test_files/@ace/addons/ace_advanced_ballistics.pbo");
         let pbo = Pbo::read(Cursor::new(&bytes)).unwrap();
         assert_eq!(pbo.entries.len(), 49);
     }
