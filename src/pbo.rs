@@ -5,7 +5,7 @@ use std::{
 };
 
 use byteorder::{LittleEndian, ReadBytesExt};
-use snafu::{ResultExt, Snafu, Whatever};
+use snafu::{ResultExt, Snafu};
 
 #[derive(Debug)]
 pub struct Pbo<I: BufRead + Seek> {

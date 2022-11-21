@@ -14,10 +14,10 @@ pub fn gen_srf(base_path: &Path) {
         .map(|entry| entry.path().to_owned())
         .collect();
 
-    let mods: Vec<_> = paths
+    let _mods: Vec<_> = paths
         .par_iter()
         .map(|path| {
-            let generated_srf = srf::scan_mod(&path).unwrap();
+            let generated_srf = srf::scan_mod(path).unwrap();
 
             let path = path.join("mod.srf");
 
