@@ -37,6 +37,8 @@ pub struct PboEntry {
 pub enum Error {
     #[snafu(display("io error: {}", source))]
     Io { source: std::io::Error },
+    #[snafu(display("unknown pbo type: {}", r#type))]
+    PboType { r#type: u32 },
 }
 
 fn read_string<I: BufRead + Seek>(input: &mut I) -> Result<String, Error> {
@@ -60,7 +62,7 @@ impl PboEntry {
             0x43707273 => EntryType::Cprs,
             0x456e6372 => EntryType::Enco,
             0x00000000 => EntryType::None,
-            _ => panic!(),
+            _ => return Err(Error::PboType { r#type }),
         };
 
         let original_size = input.read_u32::<LittleEndian>().context(IoSnafu {})?;

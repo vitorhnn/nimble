@@ -3,6 +3,7 @@ use rayon::prelude::*;
 use relative_path::RelativePathBuf;
 use serde::{Deserialize, Deserializer, Serialize};
 use snafu::{OptionExt, ResultExt, Snafu};
+use std::ffi::OsStr;
 use std::io::{BufReader, Seek, SeekFrom};
 use std::{
     io,
@@ -10,6 +11,7 @@ use std::{
     path::Path,
 };
 use walkdir::WalkDir;
+use crate::md5_digest::Md5Digest;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "PascalCase")]
@@ -76,14 +78,14 @@ pub struct File {
 #[serde(rename_all = "PascalCase")]
 pub struct Mod {
     pub name: String,
-    pub checksum: String,
+    pub checksum: Md5Digest,
     pub files: Vec<File>,
 }
 
 impl Mod {
     pub fn generate_invalid(remote: &Self) -> Self {
         Self {
-            checksum: "INVALID".into(),
+            checksum: Default::default(),
             files: vec![],
             ..remote.clone()
         }
@@ -230,14 +232,11 @@ fn recurse(path: &Path, base_path: &Path) -> Result<Vec<File>, Error> {
 
     let entries: Vec<_> = WalkDir::new(path)
         .into_iter()
+        .filter_entry(|e| e.file_name() != OsStr::new("mod.srf"))
         .filter_map(|e| e.ok())
         .filter(|e| {
             // someday this spaghetti can just be replaced by Option::contains
-            if let Some(is_dir) = e
-                .metadata()
-                .ok()
-                .map(|metadata| metadata.is_dir())
-            {
+            if let Some(is_dir) = e.metadata().ok().map(|metadata| metadata.is_dir()) {
                 !is_dir
             } else {
                 false
@@ -276,10 +275,12 @@ pub fn scan_mod(path: &Path) -> Result<Mod, Error> {
 
         for file in &files {
             hasher.update(&file.checksum);
-            hasher.update(file.path.to_string().to_lowercase().replace('\\', "/"));
+            let relpath = file.path.as_str().to_lowercase().replace('\\', "/");
+            hasher.update(relpath);
         }
 
-        format!("{:X}", hasher.finalize())
+        let output = hasher.finalize();
+        Md5Digest::from_bytes(output.into())
     };
 
     Ok(Mod {
@@ -324,12 +325,14 @@ fn read_legacy_srf_addon(line: &str) -> Result<(Mod, u32), Error> {
         .parse()
         .context(LegacySrfU32ParseFailureSnafu)?;
 
-    let checksum = split
+    let checksum_digest = split
         .next()
         .context(LegacySrfParseFailureSnafu {
             description: "addon line missing checksum",
         })?
         .to_string();
+
+    let checksum = Md5Digest::new(&checksum_digest);
 
     Ok((
         Mod {

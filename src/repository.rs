@@ -1,6 +1,7 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use snafu::prelude::*;
 use std::{fmt::Display, net::IpAddr, str::FromStr};
+use crate::md5_digest::Md5Digest;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -39,7 +40,7 @@ where
 pub struct Mod {
     pub mod_name: String,
     #[serde(rename = "checkSum")] // why
-    pub checksum: String,
+    pub checksum: Md5Digest,
     pub enabled: bool,
 }
 
