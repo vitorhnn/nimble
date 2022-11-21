@@ -266,9 +266,9 @@ pub fn scan_mod(path: &Path) -> Result<Mod, Error> {
 
     files.sort_by(|a, b| {
         a.path
-            .to_string()
-            .to_lowercase()
-            .cmp(&b.path.to_string().to_lowercase())
+            .as_str()
+            .to_uppercase()
+            .cmp(&b.path.as_str().to_uppercase())
     });
 
     let checksum = {
