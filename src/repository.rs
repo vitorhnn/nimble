@@ -75,15 +75,6 @@ pub struct Repository {
     pub servers: Vec<Server>,
 }
 
-pub fn replicate_remote_repo_info(remote: &Repository) -> Repository {
-    Repository {
-        required_mods: vec![],
-        optional_mods: vec![],
-        checksum: "INVALID".into(),
-        ..remote.clone()
-    }
-}
-
 pub fn get_repository_info(agent: &mut ureq::Agent, url: &str) -> Result<Repository, Error> {
     agent
         .get(url)

@@ -165,11 +165,11 @@ fn execute_command_list(
 
         let remote_url = format!("{}{}", remote_base, command.file);
 
-        let mut response = agent.get(&remote_url).call().context(HttpSnafu {
+        let response = agent.get(&remote_url).call().context(HttpSnafu {
             url: remote_url.clone(),
         })?;
 
-        let mut pb = response
+        let pb = response
             .header("Content-Length")
             .and_then(|len| len.parse().ok())
             .map(ProgressBar::new)
@@ -180,7 +180,7 @@ fn execute_command_list(
             .with_key("eta", |state: &ProgressState, w: &mut dyn std::fmt::Write| write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap())
             .progress_chars("#>-"));
 
-        let mut reader = response.into_reader();
+        let reader = response.into_reader();
 
         std::io::copy(&mut pb.wrap_read(reader), &mut temp_download_file).context(IoSnafu)?;
 
@@ -190,7 +190,7 @@ fn execute_command_list(
             .context(IoSnafu)?;
         let mut local_file = File::create(&file_path).context(IoSnafu)?;
 
-        temp_download_file.seek(SeekFrom::Start(0));
+        temp_download_file.seek(SeekFrom::Start(0)).context(IoSnafu)?;
         std::io::copy(&mut temp_download_file, &mut local_file).context(IoSnafu)?;
     }
 

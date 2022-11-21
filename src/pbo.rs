@@ -15,7 +15,7 @@ pub struct Pbo<I: BufRead + Seek> {
     pub entries: Vec<PboEntry>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum EntryType {
     Vers,
     Cprs,

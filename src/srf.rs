@@ -40,6 +40,8 @@ pub enum Error {
     LegacySrfParseFailure { description: &'static str },
     #[snafu(display("legacy srf failed to parse size as u32: {}", source))]
     LegacySrfU32ParseFailure { source: std::num::ParseIntError },
+    #[snafu(display("failed to decode md5 digest: {}", source))]
+    DigestParse { source: crate::md5_digest::Error },
 }
 
 impl FileType {
@@ -332,7 +334,7 @@ fn read_legacy_srf_addon(line: &str) -> Result<(Mod, u32), Error> {
         })?
         .to_string();
 
-    let checksum = Md5Digest::new(&checksum_digest);
+    let checksum = Md5Digest::new(&checksum_digest).context(DigestParseSnafu)?;
 
     Ok((
         Mod {

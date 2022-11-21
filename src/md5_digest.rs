@@ -1,31 +1,32 @@
 use std::fmt::{Debug, Formatter};
+use hex::FromHexError;
 use serde::{Serialize, Deserialize, Serializer, Deserializer};
+use snafu::{ResultExt, Snafu};
 
-#[derive(Hash, PartialEq, Eq, Clone)]
+#[derive(Debug, Snafu)]
+pub enum Error {
+    #[snafu(display("hex digest decode error: {}", source))]
+    HexDecode { source: FromHexError }
+}
+
+#[derive(Default, Hash, PartialEq, Eq, Clone)]
 pub struct Md5Digest {
     inner: [u8; 16],
 }
 
 impl Md5Digest {
-   pub fn new(digest: &str) -> Self {
+   pub fn new(digest: &str) -> Result<Self, Error> {
        let mut inner = [0; 16];
-       hex::decode_to_slice(digest, &mut inner);
-       Self {
+       hex::decode_to_slice(digest, &mut inner).context(HexDecodeSnafu)?;
+
+       Ok(Self {
            inner,
-       }
+       })
    }
 
     pub fn from_bytes(bytes: [u8; 16]) -> Self {
         Self {
             inner: bytes,
-        }
-    }
-}
-
-impl Default for Md5Digest {
-    fn default() -> Self {
-        Self {
-            inner: [0; 16],
         }
     }
 }
