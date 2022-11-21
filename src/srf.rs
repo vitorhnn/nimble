@@ -479,6 +479,7 @@ pub fn deserialize_legacy_srf<I: BufRead + Seek>(input: &mut I) -> Result<Mod, E
 mod tests {
     use super::*;
     use std::io::Cursor;
+    use std::path::PathBuf;
 
     #[test]
     fn legacy_srf_test() {
@@ -488,5 +489,13 @@ mod tests {
 
         assert_eq!(deserialized.name, "@lambs_danger");
         assert_eq!(deserialized.checksum, Md5Digest::new("44C1B8021822F80E1E560689D2AAB0BF").unwrap());
+    }
+
+    #[test]
+    fn gen_srf_test() {
+        let project_root = env!("CARGO_MANIFEST_DIR");
+        let r#mod = scan_mod(&[project_root, "test_files", "@ace"].iter().collect::<PathBuf>()).unwrap();
+
+        assert_eq!(r#mod.checksum, Md5Digest::new("787662722D70C36DF28CD1D5EE8D8E86").unwrap());
     }
 }
