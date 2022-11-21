@@ -6,6 +6,7 @@ mod commands;
 mod pbo;
 mod repository;
 mod srf;
+mod md5_digest;
 
 #[derive(Subcommand)]
 enum Commands {
