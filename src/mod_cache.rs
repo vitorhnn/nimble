@@ -20,7 +20,7 @@ pub enum Error {
 
 #[derive(Serialize, Deserialize)]
 pub struct Mod {
-    name: String,
+    pub name: String,
 }
 
 type SrfMod = crate::srf::Mod;
