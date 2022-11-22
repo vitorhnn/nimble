@@ -35,6 +35,5 @@ pub fn gen_srf(base_path: &Path) {
 
     let cache = ModCache::new(mods);
 
-    let writer = BufWriter::new(File::create(base_path.join("nimble-cache.json")).unwrap());
-    serde_json::to_writer(writer, &cache).unwrap();
+    cache.to_disk(base_path).unwrap();
 }

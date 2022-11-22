@@ -35,6 +35,8 @@ pub enum Error {
     LegacySrfDeserialization { source: srf::Error },
     #[snafu(display("Failed to generate SRF: {}", source))]
     SrfGeneration { source: srf::Error },
+    #[snafu(display("Failed to open ModCache: {}", source))]
+    ModCacheOpen { source: crate::mod_cache::Error }
 }
 
 fn diff_repo<'a>(
@@ -206,22 +208,7 @@ pub fn sync(
     let remote_repo = repository::get_repository_info(agent, &format!("{}/repo.json", repo_url))
         .context(RepositoryFetchSnafu)?;
 
-    let mut mod_cache = {
-        let file = File::open(base_path.join("nimble-cache.json"));
-
-        match file {
-            Err(e) => {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    Ok(ModCache::new_empty())
-                } else {
-                    return Err(Error::Io { source: e });
-                }
-            }
-            Ok(file) => {
-                serde_json::from_reader(BufReader::new(file)).context(SrfDeserializationSnafu)
-            }
-        }
-    }?;
+    let mut mod_cache = ModCache::from_disk_or_empty(base_path).context(ModCacheOpenSnafu)?;
 
     let check = diff_repo(&mod_cache, &remote_repo);
 
