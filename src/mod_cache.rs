@@ -1,10 +1,10 @@
+use crate::md5_digest::Md5Digest;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
-use std::path::Path;
+use snafu::{ResultExt, Snafu};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
-use snafu::{Snafu, ResultExt};
-use crate::md5_digest::Md5Digest;
+use std::path::Path;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -19,20 +19,33 @@ pub enum Error {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct Mod {
+    name: String,
+}
+
+type SrfMod = crate::srf::Mod;
+
+#[derive(Serialize, Deserialize)]
 pub struct ModCache {
     version: u32,
-    pub mods: HashSet<Md5Digest>,
+    pub mods: HashMap<Md5Digest, Mod>,
 }
 
 impl ModCache {
-    pub fn new(mods: HashSet<Md5Digest>) -> Self {
-        Self { version: 1, mods }
+    pub fn new(mods: HashMap<Md5Digest, SrfMod>) -> Self {
+        Self {
+            version: 1,
+            mods: mods
+                .into_iter()
+                .map(|(k, v)| (k, Mod { name: v.name }))
+                .collect(),
+        }
     }
 
     pub fn new_empty() -> Self {
         Self {
             version: 1,
-            mods: HashSet::new(),
+            mods: HashMap::new(),
         }
     }
 
@@ -44,10 +57,8 @@ impl ModCache {
                 let reader = BufReader::new(file);
                 serde_json::from_reader(reader).context(DeserializationSnafu)
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                Ok(Self::new_empty())
-            },
-            Err(e) => Err(Error::FileOpen { source: e })
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::new_empty()),
+            Err(e) => Err(Error::FileOpen { source: e }),
         }
     }
 
@@ -62,7 +73,9 @@ impl ModCache {
     }
 
     pub fn update_mod_checksum(&mut self, old_checksum: &Md5Digest, new_checksum: Md5Digest) {
-        self.mods.remove(old_checksum);
-        self.mods.insert(new_checksum);
+        let r#mod = self.mods.remove(old_checksum);
+        if let Some(r#mod) = r#mod {
+            self.mods.insert(new_checksum, r#mod);
+        }
     }
 }

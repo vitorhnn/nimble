@@ -36,7 +36,7 @@ pub enum Error {
     #[snafu(display("Failed to generate SRF: {}", source))]
     SrfGeneration { source: srf::Error },
     #[snafu(display("Failed to open ModCache: {}", source))]
-    ModCacheOpen { source: crate::mod_cache::Error }
+    ModCacheOpen { source: crate::mod_cache::Error },
 }
 
 fn diff_repo<'a>(
@@ -49,7 +49,7 @@ fn diff_repo<'a>(
     // generate them for comparison. they aren't that useful anyway
 
     for _mod in &remote_repo.required_mods {
-        if !mod_cache.mods.contains(&_mod.checksum) {
+        if !mod_cache.mods.contains_key(&_mod.checksum) {
             downloads.push(_mod);
         }
     }
@@ -192,7 +192,9 @@ fn execute_command_list(
             .context(IoSnafu)?;
         let mut local_file = File::create(&file_path).context(IoSnafu)?;
 
-        temp_download_file.seek(SeekFrom::Start(0)).context(IoSnafu)?;
+        temp_download_file
+            .seek(SeekFrom::Start(0))
+            .context(IoSnafu)?;
         std::io::copy(&mut temp_download_file, &mut local_file).context(IoSnafu)?;
     }
 
@@ -235,9 +237,9 @@ pub fn sync(
 
     // gen_srf for the mods we downloaded
     for _mod in &check {
-        let checksum = gen_srf_for_mod(&base_path.join(Path::new(&_mod.mod_name)));
+        let srf = gen_srf_for_mod(&base_path.join(Path::new(&_mod.mod_name)));
 
-        mod_cache.update_mod_checksum(&_mod.checksum, checksum);
+        mod_cache.update_mod_checksum(&_mod.checksum, srf.checksum);
     }
 
     // reserialize the cache
