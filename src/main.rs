@@ -3,11 +3,11 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 mod commands;
+mod md5_digest;
 mod mod_cache;
 mod pbo;
 mod repository;
 mod srf;
-mod md5_digest;
 
 #[derive(Subcommand)]
 enum Commands {
@@ -16,7 +16,7 @@ enum Commands {
         repo_url: String,
 
         #[clap(short, long)]
-        local_path: PathBuf,
+        path: PathBuf,
 
         #[clap(short, long)]
         dry_run: bool,
@@ -24,7 +24,11 @@ enum Commands {
     GenSrf {
         #[clap(short, long)]
         path: PathBuf,
-    }
+    },
+    Launch {
+        #[clap(short, long)]
+        path: PathBuf,
+    },
 }
 
 #[derive(Parser)]
@@ -43,13 +47,16 @@ fn main() {
     match args.command {
         Commands::Sync {
             repo_url,
-            local_path,
+            path,
             dry_run,
         } => {
-            commands::sync::sync(&mut agent, &repo_url, &local_path, dry_run).unwrap();
+            commands::sync::sync(&mut agent, &repo_url, &path, dry_run).unwrap();
         }
         Commands::GenSrf { path } => {
             commands::gen_srf::gen_srf(&path);
+        }
+        Commands::Launch { path }  => {
+            commands::launch::launch(path).unwrap();
         }
     }
 }
