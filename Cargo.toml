@@ -20,4 +20,6 @@ walkdir = "2"
 indicatif = "0.17"
 tempfile = "3"
 hex = "0.4"
+open = "3"
+percent-encoding = "2"
 # tinyvec = { version = "1.5", features = ["alloc", "rustc_1_55"] }
