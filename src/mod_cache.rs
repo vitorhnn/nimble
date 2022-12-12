@@ -18,9 +18,15 @@ pub enum Error {
     Deserialization { source: serde_json::Error },
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Mod {
     pub name: String,
+}
+
+impl From<crate::srf::Mod> for Mod {
+    fn from(value: crate::srf::Mod) -> Self {
+        Mod { name: value.name }
+    }
 }
 
 type SrfMod = crate::srf::Mod;
@@ -37,7 +43,7 @@ impl ModCache {
             version: 1,
             mods: mods
                 .into_iter()
-                .map(|(k, v)| (k, Mod { name: v.name }))
+                .map(|(k, v)| (k, v.into()))
                 .collect(),
         }
     }
@@ -72,10 +78,11 @@ impl ModCache {
         Ok(())
     }
 
-    pub fn update_mod_checksum(&mut self, old_checksum: &Md5Digest, new_checksum: Md5Digest) {
-        let r#mod = self.mods.remove(old_checksum);
-        if let Some(r#mod) = r#mod {
-            self.mods.insert(new_checksum, r#mod);
-        }
+    pub fn remove(&mut self, checksum: &Md5Digest) {
+        self.mods.remove(checksum);
+    }
+
+    pub fn insert(&mut self, r#mod: crate::srf::Mod) {
+        self.mods.insert(r#mod.checksum.clone(), r#mod.into());
     }
 }

@@ -216,6 +216,11 @@ pub fn sync(
 
     println!("mods to check: {:#?}", check);
 
+    // remove all mods to check from cache, we'll readd them later
+    for _mod in &check {
+        mod_cache.remove(&_mod.checksum);
+    }
+
     let mut download_commands = vec![];
 
     for _mod in &check {
@@ -239,7 +244,7 @@ pub fn sync(
     for _mod in &check {
         let srf = gen_srf_for_mod(&base_path.join(Path::new(&_mod.mod_name)));
 
-        mod_cache.update_mod_checksum(&_mod.checksum, srf.checksum);
+        mod_cache.insert(srf);
     }
 
     // reserialize the cache
