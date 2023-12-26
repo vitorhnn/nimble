@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    ffi::CStr,
     io::{BufRead, Seek},
 };
 
@@ -46,9 +45,14 @@ fn read_string<I: BufRead + Seek>(input: &mut I) -> Result<String, Error> {
 
     input.read_until(b'\0', &mut buf).context(IoSnafu {})?;
 
-    let str = unsafe { CStr::from_bytes_with_nul_unchecked(&buf) }.to_string_lossy();
+    let str = if let Some((_, slice)) = buf.split_last() {
+        let str = String::from_utf8_lossy(slice);
+        str.to_string()
+    } else {
+        "".to_string()
+    };
 
-    Ok(str.to_string())
+    Ok(str)
 }
 
 impl PboEntry {
