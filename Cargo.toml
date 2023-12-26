@@ -22,4 +22,5 @@ tempfile = "3"
 hex = "0.4"
 open = "3"
 percent-encoding = "2"
+steamlocate = "2.0.0-beta.2"
 # tinyvec = { version = "1.5", features = ["alloc", "rustc_1_55"] }
