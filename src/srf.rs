@@ -1,3 +1,4 @@
+use crate::md5_digest::Md5Digest;
 use md5::{Digest, Md5};
 use rayon::prelude::*;
 use relative_path::RelativePathBuf;
@@ -11,7 +12,6 @@ use std::{
     path::Path,
 };
 use walkdir::WalkDir;
-use crate::md5_digest::Md5Digest;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "PascalCase")]
@@ -504,14 +504,25 @@ mod tests {
         let deserialized = deserialize_legacy_srf(&mut cursor).unwrap();
 
         assert_eq!(deserialized.name, "@lambs_danger");
-        assert_eq!(deserialized.checksum, Md5Digest::new("44C1B8021822F80E1E560689D2AAB0BF").unwrap());
+        assert_eq!(
+            deserialized.checksum,
+            Md5Digest::new("44C1B8021822F80E1E560689D2AAB0BF").unwrap()
+        );
     }
 
     #[test]
     fn gen_srf_test() {
         let project_root = env!("CARGO_MANIFEST_DIR");
-        let r#mod = scan_mod(&[project_root, "test_files", "@ace"].iter().collect::<PathBuf>()).unwrap();
+        let r#mod = scan_mod(
+            &[project_root, "test_files", "@ace"]
+                .iter()
+                .collect::<PathBuf>(),
+        )
+        .unwrap();
 
-        assert_eq!(r#mod.checksum, Md5Digest::new("787662722D70C36DF28CD1D5EE8D8E86").unwrap());
+        assert_eq!(
+            r#mod.checksum,
+            Md5Digest::new("787662722D70C36DF28CD1D5EE8D8E86").unwrap()
+        );
     }
 }

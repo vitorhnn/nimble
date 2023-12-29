@@ -55,7 +55,7 @@ fn main() {
         Commands::GenSrf { path } => {
             commands::gen_srf::gen_srf(&path);
         }
-        Commands::Launch { path }  => {
+        Commands::Launch { path } => {
             commands::launch::launch(path).unwrap();
         }
     }

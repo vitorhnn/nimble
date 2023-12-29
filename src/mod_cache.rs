@@ -41,10 +41,7 @@ impl ModCache {
     pub fn new(mods: HashMap<Md5Digest, SrfMod>) -> Self {
         Self {
             version: 1,
-            mods: mods
-                .into_iter()
-                .map(|(k, v)| (k, v.into()))
-                .collect(),
+            mods: mods.into_iter().map(|(k, v)| (k, v.into())).collect(),
         }
     }
 
