@@ -149,7 +149,23 @@ fn diff_mod(
         }
     }
 
+    // remove any local files that remain here
+    remove_leftover_files(local_base_path, &remote_srf, local_files.into_values()).context(IoSnafu)?;
+
     Ok(download_list)
+}
+
+// remove files that are present in the local disk but not in the remote repo
+fn remove_leftover_files<'a>(local_base_path: &Path, r#mod: &srf::Mod, files: impl Iterator<Item = &'a srf::File>) -> Result<(), std::io::Error> {
+    for file in files {
+        let path = file.path.to_path(local_base_path.join(Path::new(&r#mod.name)));
+
+        println!("removing leftover file {}", &path.display());
+
+        std::fs::remove_file(&path)?;
+    }
+
+    Ok(())
 }
 
 fn execute_command_list(
