@@ -1,7 +1,7 @@
+use crate::md5_digest::Md5Digest;
 use serde::{Deserialize, Deserializer, Serialize};
 use snafu::prelude::*;
 use std::{fmt::Display, net::IpAddr, str::FromStr};
-use crate::md5_digest::Md5Digest;
 
 #[derive(Debug, Snafu)]
 pub enum Error {

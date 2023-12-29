@@ -1,12 +1,12 @@
-use std::fmt::{Debug, Formatter};
 use hex::FromHexError;
-use serde::{Serialize, Deserialize, Serializer, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use snafu::{ResultExt, Snafu};
+use std::fmt::{Debug, Formatter};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("hex digest decode error: {}", source))]
-    HexDecode { source: FromHexError }
+    HexDecode { source: FromHexError },
 }
 
 #[derive(Default, Hash, PartialEq, Eq, Clone)]
@@ -15,24 +15,23 @@ pub struct Md5Digest {
 }
 
 impl Md5Digest {
-   pub fn new(digest: &str) -> Result<Self, Error> {
-       let mut inner = [0; 16];
-       hex::decode_to_slice(digest, &mut inner).context(HexDecodeSnafu)?;
+    pub fn new(digest: &str) -> Result<Self, Error> {
+        let mut inner = [0; 16];
+        hex::decode_to_slice(digest, &mut inner).context(HexDecodeSnafu)?;
 
-       Ok(Self {
-           inner,
-       })
-   }
+        Ok(Self { inner })
+    }
 
     pub fn from_bytes(bytes: [u8; 16]) -> Self {
-        Self {
-            inner: bytes,
-        }
+        Self { inner: bytes }
     }
 }
 
 impl Serialize for Md5Digest {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
         let digest = hex::encode_upper(&self.inner);
 
         serializer.serialize_str(&digest)
@@ -40,7 +39,10 @@ impl Serialize for Md5Digest {
 }
 
 impl<'de> Deserialize<'de> for Md5Digest {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
         let digest = String::deserialize(deserializer)?;
 
         let mut inner = [0; 16];

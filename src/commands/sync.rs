@@ -82,7 +82,8 @@ fn diff_mod(
     let remote_is_legacy = srf::is_legacy_srf(&mut Cursor::new(bomless)).context(IoSnafu)?;
 
     let remote_srf: srf::Mod = if remote_is_legacy {
-        srf::deserialize_legacy_srf(&mut BufReader::new(Cursor::new(bomless))).context(LegacySrfDeserializationSnafu)?
+        srf::deserialize_legacy_srf(&mut BufReader::new(Cursor::new(bomless)))
+            .context(LegacySrfDeserializationSnafu)?
     } else {
         serde_json::from_str(bomless).context(SrfDeserializationSnafu)?
     };
@@ -101,7 +102,8 @@ fn diff_mod(
                     let mut reader = BufReader::new(file);
 
                     if srf::is_legacy_srf(&mut reader).context(IoSnafu)? {
-                        srf::deserialize_legacy_srf(&mut reader).context(LegacySrfDeserializationSnafu)?
+                        srf::deserialize_legacy_srf(&mut reader)
+                            .context(LegacySrfDeserializationSnafu)?
                     } else {
                         serde_json::from_reader(&mut reader).context(SrfDeserializationSnafu)?
                     }
@@ -155,15 +157,22 @@ fn diff_mod(
     }
 
     // remove any local files that remain here
-    remove_leftover_files(local_base_path, &remote_srf, local_files.into_values()).context(IoSnafu)?;
+    remove_leftover_files(local_base_path, &remote_srf, local_files.into_values())
+        .context(IoSnafu)?;
 
     Ok(download_list)
 }
 
 // remove files that are present in the local disk but not in the remote repo
-fn remove_leftover_files<'a>(local_base_path: &Path, r#mod: &srf::Mod, files: impl Iterator<Item = &'a srf::File>) -> Result<(), std::io::Error> {
+fn remove_leftover_files<'a>(
+    local_base_path: &Path,
+    r#mod: &srf::Mod,
+    files: impl Iterator<Item = &'a srf::File>,
+) -> Result<(), std::io::Error> {
     for file in files {
-        let path = file.path.to_path(local_base_path.join(Path::new(&r#mod.name)));
+        let path = file
+            .path
+            .to_path(local_base_path.join(Path::new(&r#mod.name)));
 
         println!("removing leftover file {}", &path.display());
 

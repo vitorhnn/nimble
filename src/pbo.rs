@@ -1,9 +1,9 @@
+use std::ffi::FromVecWithNulError;
 use std::{
     collections::HashMap,
     ffi::CString,
     io::{BufRead, Seek},
 };
-use std::ffi::FromVecWithNulError;
 
 use byteorder::{LittleEndian, ReadBytesExt};
 use snafu::{ResultExt, Snafu};
@@ -41,7 +41,7 @@ pub enum Error {
     #[snafu(display("unknown pbo type: {}", r#type))]
     PboType { r#type: u32 },
     #[snafu(display("string deserialization error: {}", source))]
-    StringDeserialization { source: FromVecWithNulError }
+    StringDeserialization { source: FromVecWithNulError },
 }
 
 fn read_string<I: BufRead + Seek>(input: &mut I) -> Result<String, Error> {
@@ -133,8 +133,8 @@ impl<I: BufRead + Seek> Pbo<I> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
     use super::*;
+    use std::io::Cursor;
 
     #[test]
     fn basic_pbo_test() {
