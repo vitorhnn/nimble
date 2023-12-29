@@ -448,6 +448,22 @@ fn read_legacy_srf_file(
     })
 }
 
+pub fn is_legacy_srf<I: Read + Seek>(input: &mut I) -> Result<bool, io::Error> {
+    let start = input.stream_position()?;
+    let mut buf = [0; 5];
+    input.read_exact(&mut buf)?;
+
+    let output = if String::from_utf8_lossy(&buf) == "ADDON" {
+        true
+    } else {
+        false
+    };
+
+    input.seek(SeekFrom::Start(start))?;
+
+    Ok(output)
+}
+
 pub fn deserialize_legacy_srf<I: BufRead + Seek>(input: &mut I) -> Result<Mod, Error> {
     // swifty's legacy srf format is stateful
     input.seek(SeekFrom::Start(0)).context(IoSnafu)?;
