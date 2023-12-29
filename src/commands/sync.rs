@@ -79,10 +79,13 @@ fn diff_mod(
     // yeet utf-8 bom, which is bad, not very useful and not supported by serde
     let bomless = buf.trim_start_matches('\u{feff}');
 
-    let remote_srf: srf::Mod = serde_json::from_str(bomless)
-        .context(SrfDeserializationSnafu)
-        .or_else(|_| srf::deserialize_legacy_srf(&mut BufReader::new(Cursor::new(bomless))))
-        .context(LegacySrfDeserializationSnafu)?;
+    let remote_is_legacy = srf::is_legacy_srf(&mut Cursor::new(bomless)).context(IoSnafu)?;
+
+    let remote_srf: srf::Mod = if remote_is_legacy {
+        srf::deserialize_legacy_srf(&mut BufReader::new(Cursor::new(bomless))).context(LegacySrfDeserializationSnafu)?
+    } else {
+        serde_json::from_str(bomless).context(SrfDeserializationSnafu)?
+    };
 
     let local_path = local_base_path.join(Path::new(&format!("{}/", remote_mod.mod_name)));
     let srf_path = local_path.join(Path::new("mod.srf"));
@@ -97,9 +100,11 @@ fn diff_mod(
                 Ok(file) => {
                     let mut reader = BufReader::new(file);
 
-                    serde_json::from_reader(&mut reader)
-                        .or_else(|_| srf::deserialize_legacy_srf(&mut reader))
-                        .context(LegacySrfDeserializationSnafu)?
+                    if srf::is_legacy_srf(&mut reader).context(IoSnafu)? {
+                        srf::deserialize_legacy_srf(&mut reader).context(LegacySrfDeserializationSnafu)?
+                    } else {
+                        serde_json::from_reader(&mut reader).context(SrfDeserializationSnafu)?
+                    }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     srf::scan_mod(&local_path).context(SrfGenerationSnafu)?
