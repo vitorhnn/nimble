@@ -87,7 +87,7 @@ pub struct Mod {
 impl Mod {
     pub fn generate_invalid(remote: &Self) -> Self {
         Self {
-            checksum: Default::default(),
+            checksum: Md5Digest::default(),
             files: vec![],
             ..remote.clone()
         }
@@ -102,7 +102,7 @@ fn generate_hash(file: &mut BufReader<std::fs::File>, len: u64) -> Result<String
 
     let hash = hasher.finalize();
 
-    Ok(format!("{:X}", hash))
+    Ok(format!("{hash:X}"))
 }
 
 pub fn scan_pbo(path: &Path, base_path: &Path) -> Result<File, Error> {
@@ -129,16 +129,16 @@ pub fn scan_pbo(path: &Path, base_path: &Path) -> Result<File, Error> {
 
     // swifty, as always, does very strange things
     for entry in pbo.entries.iter().skip(1) {
-        let hash = generate_hash(pbo.input, entry.data_size as u64)?;
+        let hash = generate_hash(pbo.input, u64::from(entry.data_size))?;
 
         parts.push(Part {
             path: entry.filename.clone(),
-            length: entry.data_size as u64,
+            length: u64::from(entry.data_size),
             checksum: hash,
             start: offset,
         });
 
-        offset += entry.data_size as u64;
+        offset += u64::from(entry.data_size);
     }
 
     {
@@ -195,7 +195,7 @@ pub fn scan_file(path: &Path, base_path: &Path) -> Result<File, Error> {
         let hash = hasher.finalize();
 
         parts.push(Part {
-            checksum: format!("{:X}", hash),
+            checksum: format!("{hash:X}"),
             length: copied,
             path: format!(
                 "{}_{}",
@@ -207,7 +207,7 @@ pub fn scan_file(path: &Path, base_path: &Path) -> Result<File, Error> {
                 pos
             ),
             start: pre_copy_pos,
-        })
+        });
     }
 
     // final checksum generation
@@ -215,7 +215,7 @@ pub fn scan_file(path: &Path, base_path: &Path) -> Result<File, Error> {
     let mut hasher = Md5::new();
 
     for part in &parts {
-        hasher.update(&part.checksum)
+        hasher.update(&part.checksum);
     }
 
     let path = RelativePathBuf::from_path(path.strip_prefix(base_path).unwrap()).unwrap();
@@ -235,7 +235,7 @@ fn recurse(path: &Path, base_path: &Path) -> Result<Vec<File>, Error> {
     let entries: Vec<_> = WalkDir::new(path)
         .into_iter()
         .filter_entry(|e| e.file_name() != OsStr::new("mod.srf"))
-        .filter_map(|e| e.ok())
+        .filter_map(Result::ok)
         .filter(|e| {
             // someday this spaghetti can just be replaced by Option::contains
             if let Some(is_dir) = e.metadata().ok().map(|metadata| metadata.is_dir()) {
@@ -308,9 +308,7 @@ fn read_legacy_srf_addon(line: &str) -> Result<(Mod, u32), Error> {
         })?
         .to_string();
 
-    if r#type != "ADDON" {
-        panic!("wrong magic");
-    }
+    assert_eq!(r#type, "ADDON", "wrong magic");
 
     let name = split
         .next()
@@ -381,8 +379,8 @@ fn read_legacy_srf_part(line: &str) -> Result<Part, Error> {
 
     Ok(Part {
         path,
-        start,
         length,
+        start,
         checksum,
     })
 }
@@ -440,10 +438,10 @@ fn read_legacy_srf_file(
     }
 
     Ok(File {
-        r#type,
         path,
         length,
         checksum,
+        r#type,
         parts,
     })
 }
@@ -452,16 +450,9 @@ pub fn is_legacy_srf<I: Read + Seek>(input: &mut I) -> Result<bool, io::Error> {
     let start = input.stream_position()?;
     let mut buf = [0; 5];
     input.read_exact(&mut buf)?;
-
-    let output = if String::from_utf8_lossy(&buf) == "ADDON" {
-        true
-    } else {
-        false
-    };
-
     input.seek(SeekFrom::Start(start))?;
 
-    Ok(output)
+    Ok(String::from_utf8_lossy(&buf) == "ADDON")
 }
 
 pub fn deserialize_legacy_srf<I: BufRead + Seek>(input: &mut I) -> Result<Mod, Error> {

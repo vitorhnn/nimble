@@ -48,9 +48,9 @@ fn diff_repo<'a>(
     // repo checksums use the repo generation timestamp in the checksum calculation, so we can't really
     // generate them for comparison. they aren't that useful anyway
 
-    for _mod in &remote_repo.required_mods {
-        if !mod_cache.mods.contains_key(&_mod.checksum) {
-            downloads.push(_mod);
+    for r#mod in &remote_repo.required_mods {
+        if !mod_cache.mods.contains_key(&r#mod.checksum) {
+            downloads.push(r#mod);
         }
     }
 
@@ -92,9 +92,7 @@ fn diff_mod(
     let srf_path = local_path.join(Path::new("mod.srf"));
 
     let local_srf = {
-        if !local_path.exists() {
-            srf::Mod::generate_invalid(&remote_srf)
-        } else {
+        if local_path.exists() {
             let file = File::open(srf_path);
 
             match file {
@@ -113,6 +111,8 @@ fn diff_mod(
                 }
                 Err(e) => return Err(Error::Io { source: e }),
             }
+        } else {
+            srf::Mod::generate_invalid(&remote_srf)
         }
     };
 
@@ -145,14 +145,14 @@ fn diff_mod(
                     file: format!("{}/{}", remote_srf.name, path),
                     begin: 0,
                     end: file.length,
-                })
+                });
             }
         } else {
             download_list.push(DownloadCommand {
                 file: format!("{}/{}", remote_srf.name, path),
                 begin: 0,
                 end: file.length,
-            })
+            });
         }
     }
 
@@ -204,8 +204,7 @@ fn execute_command_list(
         let pb = response
             .header("Content-Length")
             .and_then(|len| len.parse().ok())
-            .map(ProgressBar::new)
-            .unwrap_or_else(ProgressBar::new_spinner);
+            .map_or_else(ProgressBar::new_spinner, ProgressBar::new);
 
         pb.set_style(ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
             .unwrap()
@@ -237,27 +236,27 @@ pub fn sync(
     base_path: &Path,
     dry_run: bool,
 ) -> Result<(), Error> {
-    let remote_repo = repository::get_repository_info(agent, &format!("{}/repo.json", repo_url))
+    let remote_repo = repository::get_repository_info(agent, &format!("{repo_url}/repo.json"))
         .context(RepositoryFetchSnafu)?;
 
     let mut mod_cache = ModCache::from_disk_or_empty(base_path).context(ModCacheOpenSnafu)?;
 
     let check = diff_repo(&mod_cache, &remote_repo);
 
-    println!("mods to check: {:#?}", check);
+    println!("mods to check: {check:#?}");
 
-    // remove all mods to check from cache, we'll readd them later
-    for _mod in &check {
-        mod_cache.remove(&_mod.checksum);
+    // remove all mods to check from cache, we'll read them later
+    for r#mod in &check {
+        mod_cache.remove(&r#mod.checksum);
     }
 
     let mut download_commands = vec![];
 
-    for _mod in &check {
-        download_commands.extend(diff_mod(agent, repo_url, base_path, _mod).unwrap());
+    for r#mod in &check {
+        download_commands.extend(diff_mod(agent, repo_url, base_path, r#mod).unwrap());
     }
 
-    println!("download commands: {:#?}", download_commands);
+    println!("download commands: {download_commands:#?}");
 
     if dry_run {
         return Ok(());
@@ -266,13 +265,13 @@ pub fn sync(
     let res = execute_command_list(agent, repo_url, base_path, &download_commands);
 
     if let Err(e) = res {
-        println!("an error occured while downloading: {}", e);
+        println!("an error occured while downloading: {e}");
         println!("you should retry this command");
     }
 
     // gen_srf for the mods we downloaded
-    for _mod in &check {
-        let srf = gen_srf_for_mod(&base_path.join(Path::new(&_mod.mod_name)));
+    for r#mod in &check {
+        let srf = gen_srf_for_mod(&base_path.join(Path::new(&r#mod.mod_name)));
 
         mod_cache.insert(srf);
     }

@@ -47,10 +47,10 @@ fn convert_host_base_path_to_proton_base_path(host_base_path: &Path) -> Result<P
     Ok(Path::new("c:/").join(relative))
 }
 
-pub fn launch(base_path: PathBuf) -> Result<(), Error> {
-    let mod_cache = ModCache::from_disk_or_empty(&base_path).context(ModCacheOpenSnafu)?;
+pub fn launch(base_path: &Path) -> Result<(), Error> {
+    let mod_cache = ModCache::from_disk_or_empty(base_path).context(ModCacheOpenSnafu)?;
 
-    let proton_base_path = convert_host_base_path_to_proton_base_path(&base_path)?;
+    let proton_base_path = convert_host_base_path_to_proton_base_path(base_path)?;
 
     let binding = generate_mod_args(&proton_base_path, &mod_cache);
     let cmdline =
