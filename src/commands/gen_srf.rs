@@ -25,7 +25,7 @@ pub fn gen_srf(base_path: &Path) {
         .max_depth(1)
         .into_iter()
         .par_bridge()
-        .filter_map(|e| e.ok())
+        .filter_map(Result::ok)
         .filter(|e| e.file_type().is_dir() && e.file_name().to_string_lossy().starts_with('@'))
         .map(|entry| {
             let path = entry.path();

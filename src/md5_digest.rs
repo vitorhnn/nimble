@@ -32,7 +32,7 @@ impl Serialize for Md5Digest {
     where
         S: Serializer,
     {
-        let digest = hex::encode_upper(&self.inner);
+        let digest = hex::encode_upper(self.inner);
 
         serializer.serialize_str(&digest)
     }
@@ -55,7 +55,7 @@ impl<'de> Deserialize<'de> for Md5Digest {
 impl Debug for Md5Digest {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Md5Digest")
-            .field("inner", &hex::encode_upper(&self.inner))
+            .field("inner", &hex::encode_upper(self.inner))
             .finish()
     }
 }
