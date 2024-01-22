@@ -1,12 +1,17 @@
+use crate::md5_digest::Md5Digest;
 use md5::{Digest, Md5};
+use rayon::prelude::*;
 use relative_path::RelativePathBuf;
 use serde::{Deserialize, Deserializer, Serialize};
-use snafu::{OptionExt, ResultExt, Whatever};
+use snafu::{OptionExt, ResultExt, Snafu};
+use std::ffi::OsStr;
 use std::io::{BufReader, Seek, SeekFrom};
 use std::{
+    io,
     io::{BufRead, Read},
     path::Path,
 };
+use walkdir::WalkDir;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "PascalCase")]
@@ -25,12 +30,28 @@ pub enum FileType {
     Pbo,
 }
 
+#[derive(Debug, Snafu)]
+pub enum Error {
+    #[snafu(display("io error: {}", source))]
+    Io { source: io::Error },
+    #[snafu(display("pbo error: {}", source))]
+    Pbo { source: crate::pbo::Error },
+    #[snafu(display("legacy srf parse failure: {}", description))]
+    LegacySrfParseFailure { description: &'static str },
+    #[snafu(display("legacy srf failed to parse size as u32: {}", source))]
+    LegacySrfU32ParseFailure { source: std::num::ParseIntError },
+    #[snafu(display("failed to decode md5 digest: {}", source))]
+    DigestParse { source: crate::md5_digest::Error },
+}
+
 impl FileType {
-    fn from_legacy_srf(legacy_type: &str) -> Self {
+    fn from_legacy_srf(legacy_type: &str) -> Result<Self, Error> {
         match legacy_type {
-            "PBO" => Self::Pbo,
-            "FILE" => Self::File,
-            _ => panic!("unknown legacy file type"),
+            "PBO" => Ok(Self::Pbo),
+            "FILE" => Ok(Self::File),
+            _ => Err(Error::LegacySrfParseFailure {
+                description: "unknown legacy file type",
+            }),
         }
     }
 }
@@ -59,42 +80,40 @@ pub struct File {
 #[serde(rename_all = "PascalCase")]
 pub struct Mod {
     pub name: String,
-    pub checksum: String,
+    pub checksum: Md5Digest,
     pub files: Vec<File>,
 }
 
 impl Mod {
     pub fn generate_invalid(remote: &Self) -> Self {
         Self {
-            checksum: "INVALID".into(),
+            checksum: Md5Digest::default(),
             files: vec![],
             ..remote.clone()
         }
     }
 }
 
-fn generate_hash(file: &mut BufReader<std::fs::File>, len: u64) -> Result<String, Whatever> {
+fn generate_hash(file: &mut BufReader<std::fs::File>, len: u64) -> Result<String, Error> {
     let mut hasher = Md5::new();
     let mut stream = file.take(len);
 
-    std::io::copy(&mut stream, &mut hasher).with_whatever_context(|_| "hashing failure")?;
+    std::io::copy(&mut stream, &mut hasher).context(IoSnafu {})?;
 
     let hash = hasher.finalize();
 
-    Ok(format!("{:X}", hash))
+    Ok(format!("{hash:X}"))
 }
 
-pub fn scan_pbo(path: &Path, base_path: &Path) -> Result<File, Whatever> {
-    let mut file = BufReader::new(
-        std::fs::File::open(&path).with_whatever_context(|_| "failed to open file")?,
-    );
+pub fn scan_pbo(path: &Path, base_path: &Path) -> Result<File, Error> {
+    let mut file = BufReader::new(std::fs::File::open(path).context(IoSnafu)?);
 
     let mut parts = Vec::new();
-    let pbo = crate::pbo::Pbo::read(&mut file)?;
+    let pbo = crate::pbo::Pbo::read(&mut file).context(PboSnafu)?;
     let mut offset = 0;
 
-    let length = pbo.input.seek(SeekFrom::End(0)).unwrap();
-    pbo.input.seek(SeekFrom::Start(0)).unwrap();
+    let length = pbo.input.seek(SeekFrom::End(0)).context(IoSnafu)?;
+    pbo.input.seek(SeekFrom::Start(0)).context(IoSnafu)?;
 
     {
         let header_hash = generate_hash(pbo.input, pbo.header_len)?;
@@ -109,17 +128,17 @@ pub fn scan_pbo(path: &Path, base_path: &Path) -> Result<File, Whatever> {
     }
 
     // swifty, as always, does very strange things
-    for entry in &pbo.entries {
-        let hash = generate_hash(pbo.input, entry.data_size as u64)?;
+    for entry in pbo.entries.iter().skip(1) {
+        let hash = generate_hash(pbo.input, u64::from(entry.data_size))?;
 
         parts.push(Part {
             path: entry.filename.clone(),
-            length: entry.data_size as u64,
+            length: u64::from(entry.data_size),
             checksum: hash,
             start: offset,
         });
 
-        offset += entry.data_size as u64;
+        offset += u64::from(entry.data_size);
     }
 
     {
@@ -156,16 +175,13 @@ pub fn scan_pbo(path: &Path, base_path: &Path) -> Result<File, Whatever> {
     })
 }
 
-pub fn scan_file(path: &Path, base_path: &Path) -> Result<File, Whatever> {
-    let file = std::fs::File::open(&path).with_whatever_context(|_| "failed to open file")?;
+pub fn scan_file(path: &Path, base_path: &Path) -> Result<File, Error> {
+    let file = std::fs::File::open(path).context(IoSnafu)?;
     let mut parts = Vec::new();
 
-    let file_len = file
-        .metadata()
-        .with_whatever_context(|_| "failed to acquire file metadata")?
-        .len();
+    let file_len = file.metadata().context(IoSnafu)?.len();
 
-    let mut reader = std::io::BufReader::new(file);
+    let mut reader = BufReader::new(file);
     let mut pos = 0;
 
     while pos < file_len {
@@ -173,14 +189,13 @@ pub fn scan_file(path: &Path, base_path: &Path) -> Result<File, Whatever> {
         let mut stream = reader.by_ref().take(5000000);
 
         let pre_copy_pos = pos;
-        let copied = std::io::copy(&mut stream, &mut hasher)
-            .with_whatever_context(|_| "failed to io copy into hasher")?;
+        let copied = std::io::copy(&mut stream, &mut hasher).context(IoSnafu {})?;
         pos += copied;
 
         let hash = hasher.finalize();
 
         parts.push(Part {
-            checksum: format!("{:X}", hash),
+            checksum: format!("{hash:X}"),
             length: copied,
             path: format!(
                 "{}_{}",
@@ -192,7 +207,7 @@ pub fn scan_file(path: &Path, base_path: &Path) -> Result<File, Whatever> {
                 pos
             ),
             start: pre_copy_pos,
-        })
+        });
     }
 
     // final checksum generation
@@ -200,7 +215,7 @@ pub fn scan_file(path: &Path, base_path: &Path) -> Result<File, Whatever> {
     let mut hasher = Md5::new();
 
     for part in &parts {
-        hasher.update(&part.checksum)
+        hasher.update(&part.checksum);
     }
 
     let path = RelativePathBuf::from_path(path.strip_prefix(base_path).unwrap()).unwrap();
@@ -214,47 +229,47 @@ pub fn scan_file(path: &Path, base_path: &Path) -> Result<File, Whatever> {
     })
 }
 
-fn recurse(path: &Path, base_path: &Path) -> Result<Vec<File>, Whatever> {
+fn recurse(path: &Path, base_path: &Path) -> Result<Vec<File>, Error> {
     println!("recursing into {:#?}", &path);
-    let entries = path
-        .read_dir()
-        .with_whatever_context(|_| "failed to read directory entries")?;
 
-    let mut files = Vec::new();
+    let entries: Vec<_> = WalkDir::new(path)
+        .into_iter()
+        .filter_entry(|e| e.file_name() != OsStr::new("mod.srf"))
+        .filter_map(Result::ok)
+        .filter(|e| {
+            // someday this spaghetti can just be replaced by Option::contains
+            if let Some(is_dir) = e.metadata().ok().map(|metadata| metadata.is_dir()) {
+                !is_dir
+            } else {
+                false
+            }
+        })
+        .map(|entry| entry.path().to_owned())
+        .collect();
 
-    for entry in entries {
-        let entry = entry.with_whatever_context(|_| "failed to read directory entry")?;
+    let files: Result<Vec<_>, _> = entries
+        .par_iter()
+        .map(|path| {
+            let extension = path.extension();
 
-        let metadata = entry
-            .metadata()
-            .with_whatever_context(|_| "failed to read direntry metadata")?;
-        let path = entry.path();
+            match extension {
+                Some(extension) if extension == "pbo" => scan_pbo(path, base_path),
+                _ => scan_file(path, base_path),
+            }
+        })
+        .collect();
 
-        if metadata.is_dir() {
-            files.append(&mut recurse(&path, base_path)?);
-            continue;
-        }
-
-        let extension = path.extension();
-
-        match extension {
-            Some(extension) if extension == "pbo" => files.push(scan_pbo(&path, base_path)?),
-            _ => files.push(scan_file(&path, base_path)?),
-        }
-    }
-
-    Ok(files)
+    files
 }
 
-// FIXME: ditch whatever errors
-pub fn scan_mod(path: &Path) -> Result<Mod, Whatever> {
+pub fn scan_mod(path: &Path) -> Result<Mod, Error> {
     let mut files = recurse(path, path)?;
 
     files.sort_by(|a, b| {
         a.path
-            .to_string()
-            .to_lowercase()
-            .cmp(&b.path.to_string().to_lowercase())
+            .as_str()
+            .to_uppercase()
+            .cmp(&b.path.as_str().to_uppercase())
     });
 
     let checksum = {
@@ -262,10 +277,12 @@ pub fn scan_mod(path: &Path) -> Result<Mod, Whatever> {
 
         for file in &files {
             hasher.update(&file.checksum);
-            hasher.update(file.path.to_string().to_lowercase().replace("\\", "/"));
+            let relpath = file.path.as_str().to_lowercase().replace('\\', "/");
+            hasher.update(relpath);
         }
 
-        format!("{:X}", hasher.finalize())
+        let output = hasher.finalize();
+        Md5Digest::from_bytes(output.into())
     };
 
     Ok(Mod {
@@ -281,32 +298,41 @@ pub fn scan_mod(path: &Path) -> Result<Mod, Whatever> {
     })
 }
 
-fn read_legacy_srf_addon(line: &str) -> Result<(Mod, u32), Whatever> {
+fn read_legacy_srf_addon(line: &str) -> Result<(Mod, u32), Error> {
     let mut split = line.split(':');
 
     let r#type = split
         .next()
-        .with_whatever_context(|| "no first element?")?
+        .context(LegacySrfParseFailureSnafu {
+            description: "addon line missing type",
+        })?
         .to_string();
 
-    if r#type != "ADDON" {
-        panic!("wrong magic");
-    }
+    assert_eq!(r#type, "ADDON", "wrong magic");
 
     let name = split
         .next()
-        .with_whatever_context(|| "no second element?")?
+        .context(LegacySrfParseFailureSnafu {
+            description: "addon line missing name",
+        })?
         .to_string();
 
     let size = split
         .next()
-        .with_whatever_context(|| "no third element?")?
+        .context(LegacySrfParseFailureSnafu {
+            description: "addon line missing size",
+        })?
         .parse()
-        .with_whatever_context(|_| "failed to parse size")?;
-    let checksum = split
+        .context(LegacySrfU32ParseFailureSnafu)?;
+
+    let checksum_digest = split
         .next()
-        .with_whatever_context(|| "no fourth element?")?
+        .context(LegacySrfParseFailureSnafu {
+            description: "addon line missing checksum",
+        })?
         .to_string();
+
+    let checksum = Md5Digest::new(&checksum_digest).context(DigestParseSnafu)?;
 
     Ok((
         Mod {
@@ -318,35 +344,43 @@ fn read_legacy_srf_addon(line: &str) -> Result<(Mod, u32), Whatever> {
     ))
 }
 
-fn read_legacy_srf_part(line: &str) -> Result<Part, Whatever> {
+fn read_legacy_srf_part(line: &str) -> Result<Part, Error> {
     let mut split = line.split(':');
 
     let path = split
         .next()
-        .with_whatever_context(|| "no first element")?
+        .context(LegacySrfParseFailureSnafu {
+            description: "part line missing path",
+        })?
         .to_string();
 
     let start: u64 = split
         .next()
-        .with_whatever_context(|| "no second element")?
+        .context(LegacySrfParseFailureSnafu {
+            description: "part line missing start",
+        })?
         .parse()
-        .with_whatever_context(|_| "start was not a u64")?;
+        .context(LegacySrfU32ParseFailureSnafu)?;
 
     let length: u64 = split
         .next()
-        .with_whatever_context(|| "no third element")?
+        .context(LegacySrfParseFailureSnafu {
+            description: "part line missing length",
+        })?
         .parse()
-        .with_whatever_context(|_| "start was not a u64")?;
+        .context(LegacySrfU32ParseFailureSnafu)?;
 
     let checksum = split
         .next()
-        .with_whatever_context(|| "no fourth element")?
+        .context(LegacySrfParseFailureSnafu {
+            description: "part line missing checksum",
+        })?
         .to_string();
 
     Ok(Part {
         path,
-        start,
         length,
+        start,
         checksum,
     })
 }
@@ -354,67 +388,91 @@ fn read_legacy_srf_part(line: &str) -> Result<Part, Whatever> {
 fn read_legacy_srf_file(
     line: &str,
     lines: &mut impl Iterator<Item = String>,
-) -> Result<File, Whatever> {
+) -> Result<File, Error> {
     let mut split = line.split(':');
 
-    let r#type =
-        FileType::from_legacy_srf(split.next().with_whatever_context(|| "no first element")?);
+    let r#type = FileType::from_legacy_srf(split.next().context(LegacySrfParseFailureSnafu {
+        description: "no first element",
+    })?)?;
 
     let path = RelativePathBuf::from(
         split
             .next()
-            .with_whatever_context(|| "no second element")?
+            .context(LegacySrfParseFailureSnafu {
+                description: "file line missing path",
+            })?
             .to_string(),
     );
 
     let length: u64 = split
         .next()
-        .with_whatever_context(|| "no third element")?
+        .context(LegacySrfParseFailureSnafu {
+            description: "file line missing length",
+        })?
         .parse()
-        .with_whatever_context(|_| "length was not a u64")?;
+        .context(LegacySrfU32ParseFailureSnafu)?;
 
     let part_count: u32 = split
         .next()
-        .with_whatever_context(|| "no fourth element")?
+        .context(LegacySrfParseFailureSnafu {
+            description: "file line missing part count",
+        })?
         .parse()
-        .with_whatever_context(|_| "file_count was not a u32")?;
+        .context(LegacySrfU32ParseFailureSnafu)?;
 
     let checksum = split
         .next()
-        .with_whatever_context(|| "no fifth element")?
+        .context(LegacySrfParseFailureSnafu {
+            description: "file line missing checksum",
+        })?
         .to_string();
 
     let mut parts = Vec::new();
 
     for _ in 0..part_count {
-        let line = lines.next().with_whatever_context(|| "missing line")?;
+        let line = lines.next().context(LegacySrfParseFailureSnafu {
+            description: "part line missing",
+        })?;
 
         parts.push(read_legacy_srf_part(&line)?);
     }
 
     Ok(File {
-        r#type,
         path,
         length,
         checksum,
+        r#type,
         parts,
     })
 }
 
-pub fn deserialize_legacy_srf<I: BufRead + Seek>(input: &mut I) -> Result<Mod, Whatever> {
+pub fn is_legacy_srf<I: Read + Seek>(input: &mut I) -> Result<bool, io::Error> {
+    let start = input.stream_position()?;
+    let mut buf = [0; 5];
+    input.read_exact(&mut buf)?;
+    input.seek(SeekFrom::Start(start))?;
+
+    Ok(String::from_utf8_lossy(&buf) == "ADDON")
+}
+
+pub fn deserialize_legacy_srf<I: BufRead + Seek>(input: &mut I) -> Result<Mod, Error> {
     // swifty's legacy srf format is stateful
-    input.seek(SeekFrom::Start(0)).with_whatever_context(|_| "failed to rewind file")?;
+    input.seek(SeekFrom::Start(0)).context(IoSnafu)?;
     let mut files = Vec::<File>::new();
 
     let mut iter = input.lines().map(|line| line.expect("input.lines failed"));
 
-    let first_line = iter.next().with_whatever_context(|| "no first line")?;
+    let first_line = iter.next().context(LegacySrfParseFailureSnafu {
+        description: "no first line",
+    })?;
 
     let (addon, file_count) = read_legacy_srf_addon(&first_line)?;
 
     for _ in 0..file_count {
         let file = read_legacy_srf_file(
-            &iter.next().with_whatever_context(|| "missing lines")?,
+            &iter.next().context(LegacySrfParseFailureSnafu {
+                description: "line missing",
+            })?,
             &mut iter,
         )?;
 
@@ -428,12 +486,34 @@ pub fn deserialize_legacy_srf<I: BufRead + Seek>(input: &mut I) -> Result<Mod, W
 mod tests {
     use super::*;
     use std::io::Cursor;
+    use std::path::PathBuf;
 
     #[test]
     fn legacy_srf_test() {
-        let input = include_bytes!("mod.srf");
+        let input = include_bytes!("../test_files/legacy_format_mod.srf");
         let mut cursor = Cursor::new(input);
         let deserialized = deserialize_legacy_srf(&mut cursor).unwrap();
-        dbg!(deserialized);
+
+        assert_eq!(deserialized.name, "@lambs_danger");
+        assert_eq!(
+            deserialized.checksum,
+            Md5Digest::new("44C1B8021822F80E1E560689D2AAB0BF").unwrap()
+        );
+    }
+
+    #[test]
+    fn gen_srf_test() {
+        let project_root = env!("CARGO_MANIFEST_DIR");
+        let r#mod = scan_mod(
+            &[project_root, "test_files", "@ace"]
+                .iter()
+                .collect::<PathBuf>(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            r#mod.checksum,
+            Md5Digest::new("787662722D70C36DF28CD1D5EE8D8E86").unwrap()
+        );
     }
 }

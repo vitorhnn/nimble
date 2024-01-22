@@ -1,15 +1,13 @@
-use snafu::{ResultExt, Whatever};
-use std::fs::File;
-use std::io::{BufReader, Read};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
+mod commands;
+mod md5_digest;
+mod mod_cache;
 mod pbo;
 mod repository;
 mod srf;
-mod commands;
-
 
 #[derive(Subcommand)]
 enum Commands {
@@ -18,7 +16,18 @@ enum Commands {
         repo_url: String,
 
         #[clap(short, long)]
-        local_path: PathBuf,
+        path: PathBuf,
+
+        #[clap(short, long)]
+        dry_run: bool,
+    },
+    GenSrf {
+        #[clap(short, long)]
+        path: PathBuf,
+    },
+    Launch {
+        #[clap(short, long)]
+        path: PathBuf,
     },
 }
 
@@ -38,7 +47,16 @@ fn main() {
     match args.command {
         Commands::Sync {
             repo_url,
-            local_path,
-        } => commands::sync::sync(&mut agent, &repo_url, &local_path),
+            path,
+            dry_run,
+        } => {
+            commands::sync::sync(&mut agent, &repo_url, &path, dry_run).unwrap();
+        }
+        Commands::GenSrf { path } => {
+            commands::gen_srf::gen_srf(&path);
+        }
+        Commands::Launch { path } => {
+            commands::launch::launch(&path).unwrap();
+        }
     }
 }

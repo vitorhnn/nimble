@@ -1,22 +1,22 @@
+use std::ffi::FromVecWithNulError;
 use std::{
     collections::HashMap,
-    ffi::CStr,
+    ffi::CString,
     io::{BufRead, Seek},
 };
 
 use byteorder::{LittleEndian, ReadBytesExt};
-use snafu::{ResultExt, Whatever};
+use snafu::{ResultExt, Snafu};
 
 #[derive(Debug)]
 pub struct Pbo<I: BufRead + Seek> {
     pub input: I,
-    pub header: PboEntry,
     pub header_len: u64,
     pub extensions: HashMap<String, String>,
     pub entries: Vec<PboEntry>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum EntryType {
     Vers,
     Cprs,
@@ -34,46 +34,44 @@ pub struct PboEntry {
     pub data_size: u32,
 }
 
-fn read_string<I: BufRead + Seek>(input: &mut I) -> Result<String, Whatever> {
+#[derive(Debug, Snafu)]
+pub enum Error {
+    #[snafu(display("io error: {}", source))]
+    Io { source: std::io::Error },
+    #[snafu(display("unknown pbo type: {}", r#type))]
+    PboType { r#type: u32 },
+    #[snafu(display("string deserialization error: {}", source))]
+    StringDeserialization { source: FromVecWithNulError },
+}
+
+fn read_string<I: BufRead + Seek>(input: &mut I) -> Result<String, Error> {
     let mut buf = Vec::new();
 
-    input
-        .read_until(b'\0', &mut buf)
-        .with_whatever_context(|_| "read failure")?;
+    input.read_until(b'\0', &mut buf).context(IoSnafu {})?;
 
-    let str = unsafe { CStr::from_bytes_with_nul_unchecked(&buf) }.to_string_lossy();
+    let cstring = CString::from_vec_with_nul(buf).context(StringDeserializationSnafu)?;
 
-    Ok(str.to_string())
+    Ok(cstring.to_string_lossy().to_string())
 }
 
 impl PboEntry {
-    fn read<I: BufRead + Seek>(input: &mut I) -> Result<Self, Whatever> {
+    fn read<I: BufRead + Seek>(input: &mut I) -> Result<Self, Error> {
         let filename = read_string(input)?;
 
-        let r#type = input
-            .read_u32::<LittleEndian>()
-            .with_whatever_context(|_| "read failure")?;
+        let r#type = input.read_u32::<LittleEndian>().context(IoSnafu {})?;
 
         let r#type = match r#type {
             0x56657273 => EntryType::Vers,
             0x43707273 => EntryType::Cprs,
             0x456e6372 => EntryType::Enco,
             0x00000000 => EntryType::None,
-            _ => panic!(),
+            _ => return Err(Error::PboType { r#type }),
         };
 
-        let original_size = input
-            .read_u32::<LittleEndian>()
-            .with_whatever_context(|_| "read failure")?;
-        let offset = input
-            .read_u32::<LittleEndian>()
-            .with_whatever_context(|_| "read failure")?;
-        let timestamp = input
-            .read_u32::<LittleEndian>()
-            .with_whatever_context(|_| "read failure")?;
-        let data_size = input
-            .read_u32::<LittleEndian>()
-            .with_whatever_context(|_| "read failure")?;
+        let original_size = input.read_u32::<LittleEndian>().context(IoSnafu {})?;
+        let offset = input.read_u32::<LittleEndian>().context(IoSnafu {})?;
+        let timestamp = input.read_u32::<LittleEndian>().context(IoSnafu {})?;
+        let data_size = input.read_u32::<LittleEndian>().context(IoSnafu {})?;
 
         Ok(PboEntry {
             filename,
@@ -86,7 +84,7 @@ impl PboEntry {
     }
 }
 
-fn read_extensions<I: BufRead + Seek>(input: &mut I) -> Result<HashMap<String, String>, Whatever> {
+fn read_extensions<I: BufRead + Seek>(input: &mut I) -> Result<HashMap<String, String>, Error> {
     let mut output_map = HashMap::new();
 
     loop {
@@ -103,14 +101,8 @@ fn read_extensions<I: BufRead + Seek>(input: &mut I) -> Result<HashMap<String, S
 }
 
 impl<I: BufRead + Seek> Pbo<I> {
-    pub fn read(mut input: I) -> Result<Self, Whatever> {
-        let header = PboEntry::read(&mut input)?;
-
-        if !header.filename.is_empty() || header.r#type != EntryType::Vers {
-            panic!();
-        }
-
-        let extensions = read_extensions(&mut input)?;
+    pub fn read(mut input: I) -> Result<Self, Error> {
+        let mut extensions = HashMap::new();
 
         let mut entries = Vec::new();
 
@@ -121,6 +113,10 @@ impl<I: BufRead + Seek> Pbo<I> {
                 break;
             }
 
+            if entry.r#type == EntryType::Vers {
+                extensions = read_extensions(&mut input)?;
+            }
+
             entries.push(entry);
         }
 
@@ -128,7 +124,6 @@ impl<I: BufRead + Seek> Pbo<I> {
 
         Ok(Pbo {
             input,
-            header,
             header_len,
             extensions,
             entries,
@@ -139,16 +134,12 @@ impl<I: BufRead + Seek> Pbo<I> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
 
     #[test]
-    fn magic_check() {
-        dbg!(Pbo::read(&mut std::io::BufReader::new(
-            std::fs::File::open(
-                "/home/vitorhnn/arma_crap/mods/@ACE/addons/ace_advanced_ballistics.pbo",
-            )
-            .unwrap(),
-        ))
-        .unwrap());
-        //Pbo::read(&mut std::io::BufReader::new(std::fs::File::open("/home/vitorhnn/arma_crap/mods/@ACE/addons/ace_advanced_ballistics.pbo.ace_3.13.6.60-8bd4922f.bisign").unwrap())).unwrap();
+    fn basic_pbo_test() {
+        let bytes = include_bytes!("../test_files/@ace/addons/ace_advanced_ballistics.pbo");
+        let pbo = Pbo::read(Cursor::new(&bytes)).unwrap();
+        assert_eq!(pbo.entries.len(), 49);
     }
 }

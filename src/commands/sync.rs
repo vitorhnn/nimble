@@ -1,36 +1,13 @@
+use crate::commands::gen_srf::gen_srf_for_mod;
+use crate::mod_cache::ModCache;
+use crate::{repository, srf};
+use indicatif::{ProgressBar, ProgressState, ProgressStyle};
+use snafu::{ResultExt, Snafu};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, BufWriter, Cursor, Read, Seek, SeekFrom};
 use std::path::Path;
-use snafu::{ResultExt, Whatever};
-use crate::{srf, repository};
-
-fn diff_repos<'a>(
-    local_repo: &repository::Repository,
-    remote_repo: &'a repository::Repository,
-) -> Vec<&'a repository::Mod> {
-    let mut downloads = Vec::new();
-
-    if local_repo.checksum == remote_repo.checksum {
-        return vec![];
-    }
-
-    let mut checksum_map = HashMap::new();
-
-    for _mod in &local_repo.required_mods {
-        checksum_map.insert(&_mod.checksum, _mod);
-    }
-
-    for _mod in &remote_repo.required_mods {
-        match checksum_map.get(&_mod.checksum) {
-            None => downloads.push(_mod),
-            Some(local_mod) if local_mod.checksum != _mod.checksum => downloads.push(_mod),
-            _ => (),
-        }
-    }
-
-    downloads
-}
+use tempfile::tempfile;
 
 #[derive(Debug)]
 struct DownloadCommand {
@@ -39,54 +16,103 @@ struct DownloadCommand {
     end: u64,
 }
 
+#[derive(Snafu, Debug)]
+pub enum Error {
+    #[snafu(display("io error: {}", source))]
+    Io { source: std::io::Error },
+    #[snafu(display("Error while requesting repository data: {}", source))]
+    Http {
+        url: String,
+
+        #[snafu(source(from(ureq::Error, Box::new)))]
+        source: Box<ureq::Error>,
+    },
+    #[snafu(display("Failed to fetch repository info: {}", source))]
+    RepositoryFetch { source: repository::Error },
+    #[snafu(display("SRF deserialization failure: {}", source))]
+    SrfDeserialization { source: serde_json::Error },
+    #[snafu(display("Legacy SRF deserialization failure: {}", source))]
+    LegacySrfDeserialization { source: srf::Error },
+    #[snafu(display("Failed to generate SRF: {}", source))]
+    SrfGeneration { source: srf::Error },
+    #[snafu(display("Failed to open ModCache: {}", source))]
+    ModCacheOpen { source: crate::mod_cache::Error },
+}
+
+fn diff_repo<'a>(
+    mod_cache: &ModCache,
+    remote_repo: &'a repository::Repository,
+) -> Vec<&'a repository::Mod> {
+    let mut downloads = Vec::new();
+
+    // repo checksums use the repo generation timestamp in the checksum calculation, so we can't really
+    // generate them for comparison. they aren't that useful anyway
+
+    for r#mod in &remote_repo.required_mods {
+        if !mod_cache.mods.contains_key(&r#mod.checksum) {
+            downloads.push(r#mod);
+        }
+    }
+
+    downloads
+}
+
 fn diff_mod(
     agent: &ureq::Agent,
     repo_base_path: &str,
     local_base_path: &Path,
     remote_mod: &repository::Mod,
-) -> Result<Vec<DownloadCommand>, Whatever> {
+) -> Result<Vec<DownloadCommand>, Error> {
     // HACK HACK: this REALLY should be parsed through streaming rather than through buffering the whole thing
+    let remote_srf_url = format!("{}{}/mod.srf", repo_base_path, remote_mod.mod_name);
     let mut remote_srf = agent
-        .get(&format!(
-            "{}{}/mod.srf",
-            repo_base_path, remote_mod.mod_name
-        ))
+        .get(&remote_srf_url)
         .call()
-        .unwrap()
+        .context(HttpSnafu {
+            url: remote_srf_url,
+        })?
         .into_reader();
 
     let mut buf = String::new();
-    let _len = remote_srf.read_to_string(&mut buf).unwrap();
+    let _len = remote_srf.read_to_string(&mut buf).context(IoSnafu)?;
 
     // yeet utf-8 bom, which is bad, not very useful and not supported by serde
-    let bomless = buf.trim_start_matches("\u{feff}");
+    let bomless = buf.trim_start_matches('\u{feff}');
 
-    let remote_srf: srf::Mod = serde_json::from_str(&bomless).unwrap(); /*.or_else(|_| {
-                                                                            srf::deserialize_legacy_srf(&mut BufReader::new(Cursor::new(remote_srf)))
-                                                                        }).with_whatever_context(|_| "failed to deserialize remote srf")?;*/
+    let remote_is_legacy = srf::is_legacy_srf(&mut Cursor::new(bomless)).context(IoSnafu)?;
+
+    let remote_srf: srf::Mod = if remote_is_legacy {
+        srf::deserialize_legacy_srf(&mut BufReader::new(Cursor::new(bomless)))
+            .context(LegacySrfDeserializationSnafu)?
+    } else {
+        serde_json::from_str(bomless).context(SrfDeserializationSnafu)?
+    };
 
     let local_path = local_base_path.join(Path::new(&format!("{}/", remote_mod.mod_name)));
     let srf_path = local_path.join(Path::new("mod.srf"));
 
     let local_srf = {
-        if !local_path.exists() {
-            srf::Mod::generate_invalid(&remote_srf)
-        } else {
-            let file = File::open(&srf_path);
+        if local_path.exists() {
+            let file = File::open(srf_path);
 
             match file {
                 Ok(file) => {
                     let mut reader = BufReader::new(file);
 
-                    serde_json::from_reader(&mut reader)
-                        .or_else(|_| srf::deserialize_legacy_srf(&mut reader))
-                        .with_whatever_context(|_| "failed to deserialize local srf")?
+                    if srf::is_legacy_srf(&mut reader).context(IoSnafu)? {
+                        srf::deserialize_legacy_srf(&mut reader)
+                            .context(LegacySrfDeserializationSnafu)?
+                    } else {
+                        serde_json::from_reader(&mut reader).context(SrfDeserializationSnafu)?
+                    }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    srf::scan_mod(&local_path).unwrap()
+                    srf::scan_mod(&local_path).context(SrfGenerationSnafu)?
                 }
-                _ => panic!(),
+                Err(e) => return Err(Error::Io { source: e }),
             }
+        } else {
+            srf::Mod::generate_invalid(&remote_srf)
         }
     };
 
@@ -116,21 +142,44 @@ fn diff_mod(
                 // TODO: implement file diffing. for now, just download everything
 
                 download_list.push(DownloadCommand {
-                    file: format!("{}/{}", remote_srf.name, path.to_string().to_string()),
+                    file: format!("{}/{}", remote_srf.name, path),
                     begin: 0,
                     end: file.length,
-                })
+                });
             }
         } else {
             download_list.push(DownloadCommand {
-                file: format!("{}/{}", remote_srf.name, path.to_string().to_string()),
+                file: format!("{}/{}", remote_srf.name, path),
                 begin: 0,
                 end: file.length,
-            })
+            });
         }
     }
 
+    // remove any local files that remain here
+    remove_leftover_files(local_base_path, &remote_srf, local_files.into_values())
+        .context(IoSnafu)?;
+
     Ok(download_list)
+}
+
+// remove files that are present in the local disk but not in the remote repo
+fn remove_leftover_files<'a>(
+    local_base_path: &Path,
+    r#mod: &srf::Mod,
+    files: impl Iterator<Item = &'a srf::File>,
+) -> Result<(), std::io::Error> {
+    for file in files {
+        let path = file
+            .path
+            .to_path(local_base_path.join(Path::new(&r#mod.name)));
+
+        println!("removing leftover file {}", &path.display());
+
+        std::fs::remove_file(&path)?;
+    }
+
+    Ok(())
 }
 
 fn execute_command_list(
@@ -138,53 +187,98 @@ fn execute_command_list(
     remote_base: &str,
     local_base: &Path,
     commands: &[DownloadCommand],
-) {
+) -> Result<(), Error> {
     for (i, command) in commands.iter().enumerate() {
-        println!("downloading {} of {}", i, commands.len());
+        println!("downloading {} of {} - {}", i, commands.len(), command.file);
 
-        let file_path = local_base.join(Path::new(&command.file));
-        std::fs::create_dir_all(file_path.parent().unwrap()).unwrap();
-        let mut local_file = File::create(&file_path).unwrap();
+        // download into temp file first in case we have a failure. this avoids us writing garbage data
+        // which will later make us crash in gen_srf
+        let mut temp_download_file = tempfile().context(IoSnafu)?;
 
         let remote_url = format!("{}{}", remote_base, command.file);
 
-        let mut reader = agent.get(&remote_url).call().unwrap().into_reader();
+        let response = agent.get(&remote_url).call().context(HttpSnafu {
+            url: remote_url.clone(),
+        })?;
 
-        std::io::copy(&mut reader, &mut local_file).unwrap();
+        let pb = response
+            .header("Content-Length")
+            .and_then(|len| len.parse().ok())
+            .map_or_else(ProgressBar::new_spinner, ProgressBar::new);
+
+        pb.set_style(ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+            .unwrap()
+            .with_key("eta", |state: &ProgressState, w: &mut dyn std::fmt::Write| write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap())
+            .progress_chars("#>-"));
+
+        let reader = response.into_reader();
+
+        std::io::copy(&mut pb.wrap_read(reader), &mut temp_download_file).context(IoSnafu)?;
+
+        // copy from temp to permanent file
+        let file_path = local_base.join(Path::new(&command.file));
+        std::fs::create_dir_all(file_path.parent().expect("file_path did not have a parent"))
+            .context(IoSnafu)?;
+        let mut local_file = File::create(&file_path).context(IoSnafu)?;
+
+        temp_download_file
+            .seek(SeekFrom::Start(0))
+            .context(IoSnafu)?;
+        std::io::copy(&mut temp_download_file, &mut local_file).context(IoSnafu)?;
     }
+
+    Ok(())
 }
 
-pub fn sync(agent: &mut ureq::Agent, repo_url: &str, base_path: &Path) {
-    let remote_repo =
-        repository::get_repository_info(agent, &format!("{}/repo.json", repo_url)).unwrap();
+pub fn sync(
+    agent: &mut ureq::Agent,
+    repo_url: &str,
+    base_path: &Path,
+    dry_run: bool,
+) -> Result<(), Error> {
+    let remote_repo = repository::get_repository_info(agent, &format!("{repo_url}/repo.json"))
+        .context(RepositoryFetchSnafu)?;
 
-    let local_repo: repository::Repository = {
-        let file = std::fs::File::open(base_path.join("./repo.json"));
+    let mut mod_cache = ModCache::from_disk_or_empty(base_path).context(ModCacheOpenSnafu)?;
 
-        match file {
-            Err(e) => {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    repository::replicate_remote_repo_info(&remote_repo)
-                } else {
-                    panic!();
-                }
-            }
-            Ok(file) => serde_json::from_reader(BufReader::new(file)).unwrap(),
-        }
-    };
+    let check = diff_repo(&mod_cache, &remote_repo);
 
-    let check = diff_repos(&local_repo, &remote_repo);
+    println!("mods to check: {check:#?}");
 
-    println!("mods to check: {:#?}", check);
+    // remove all mods to check from cache, we'll read them later
+    for r#mod in &check {
+        mod_cache.remove(&r#mod.checksum);
+    }
 
     let mut download_commands = vec![];
 
-    for _mod in check {
-        download_commands.extend(diff_mod(agent, repo_url, base_path, _mod).unwrap());
+    for r#mod in &check {
+        download_commands.extend(diff_mod(agent, repo_url, base_path, r#mod).unwrap());
     }
 
-    println!("download commands: {:#?}", download_commands);
+    println!("download commands: {download_commands:#?}");
 
-    execute_command_list(agent, repo_url, base_path, &download_commands);
+    if dry_run {
+        return Ok(());
+    }
+
+    let res = execute_command_list(agent, repo_url, base_path, &download_commands);
+
+    if let Err(e) = res {
+        println!("an error occured while downloading: {e}");
+        println!("you should retry this command");
+    }
+
+    // gen_srf for the mods we downloaded
+    for r#mod in &check {
+        let srf = gen_srf_for_mod(&base_path.join(Path::new(&r#mod.mod_name)));
+
+        mod_cache.insert(srf);
+    }
+
+    // reserialize the cache
+    let writer = BufWriter::new(File::create(base_path.join("nimble-cache.json")).unwrap());
+    serde_json::to_writer(writer, &mod_cache).unwrap();
+
+    Ok(())
 }
-
