@@ -52,7 +52,7 @@ impl ModCache {
         }
     }
 
-    pub fn from_disk_or_empty(repo_path: &Path) -> Result<Self, Error> {
+    pub fn from_disk(repo_path: &Path) -> Result<Self, Error> {
         let path = repo_path.join("nimble-cache.json");
         let open_result = File::open(path);
         match open_result {
@@ -60,8 +60,17 @@ impl ModCache {
                 let reader = BufReader::new(file);
                 serde_json::from_reader(reader).context(DeserializationSnafu)
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::new_empty()),
             Err(e) => Err(Error::FileOpen { source: e }),
+        }
+    }
+
+    pub fn from_disk_or_empty(repo_path: &Path) -> Result<Self, Error> {
+        match Self::from_disk(repo_path) {
+            Ok(cache) => Ok(cache),
+            Err(Error::FileOpen { source }) if source.kind() == std::io::ErrorKind::NotFound => {
+                Ok(Self::new_empty())
+            }
+            Err(e) => Err(e),
         }
     }
 
