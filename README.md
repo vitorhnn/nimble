@@ -4,7 +4,9 @@ Nimble is a Swifty-compatible, cross platform, (currently) CLI only mod manager 
 
 # Installing
 
-Nimble can be installed via Cargo:
+Binaries are available at the [Release](https://github.com/vitorhnn/nimble/releases) page in GitHub.
+
+Nimble can also be installed via Cargo:
 
 ```
 cargo install --git https://github.com/vitorhnn/nimble.git
