@@ -12,7 +12,11 @@ use tempfile::tempfile;
 #[derive(Debug)]
 struct DownloadCommand {
     file: String,
+
+    // These are currently unused. TODO: implement file diffing.
+    #[allow(dead_code)]
     begin: u64,
+    #[allow(dead_code)]
     end: u64,
 }
 
