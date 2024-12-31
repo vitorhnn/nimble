@@ -1,6 +1,6 @@
 use crate::md5_digest::Md5Digest;
 use crate::mod_cache::ModCache;
-use crate::srf;
+use crate::{mod_cache, srf};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs::File;
@@ -17,6 +17,20 @@ pub fn gen_srf_for_mod(mod_path: &Path) -> srf::Mod {
     serde_json::to_writer(writer, &generated_srf).unwrap();
 
     generated_srf
+}
+
+pub fn open_cache_or_gen_srf(base_path: &Path) -> Result<ModCache, mod_cache::Error> {
+    match ModCache::from_disk(base_path) {
+        Ok(cache) => Ok(cache),
+        Err(mod_cache::Error::FileOpen { source })
+            if source.kind() == std::io::ErrorKind::NotFound =>
+        {
+            println!("nimble-cache.json not found, generating...");
+            gen_srf(base_path);
+            ModCache::from_disk_or_empty(base_path)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 pub fn gen_srf(base_path: &Path) {

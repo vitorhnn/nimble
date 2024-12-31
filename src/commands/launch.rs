@@ -1,3 +1,4 @@
+use crate::commands::gen_srf::open_cache_or_gen_srf;
 use crate::mod_cache;
 use crate::mod_cache::ModCache;
 use snafu::{ResultExt, Snafu};
@@ -52,7 +53,7 @@ fn convert_host_base_path_to_proton_base_path(host_base_path: &Path) -> Result<P
 }
 
 pub fn launch(base_path: &Path) -> Result<(), Error> {
-    let mod_cache = ModCache::from_disk_or_empty(base_path).context(ModCacheOpenSnafu)?;
+    let mod_cache = open_cache_or_gen_srf(base_path).context(ModCacheOpenSnafu)?;
 
     let proton_base_path = convert_host_base_path_to_proton_base_path(base_path)?;
 

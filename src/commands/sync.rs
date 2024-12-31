@@ -1,4 +1,4 @@
-use crate::commands::gen_srf::gen_srf_for_mod;
+use crate::commands::gen_srf::{gen_srf_for_mod, open_cache_or_gen_srf};
 use crate::mod_cache::ModCache;
 use crate::{repository, srf};
 use indicatif::{ProgressBar, ProgressState, ProgressStyle};
@@ -243,7 +243,7 @@ pub fn sync(
     let remote_repo = repository::get_repository_info(agent, &format!("{repo_url}/repo.json"))
         .context(RepositoryFetchSnafu)?;
 
-    let mut mod_cache = ModCache::from_disk_or_empty(base_path).context(ModCacheOpenSnafu)?;
+    let mut mod_cache = open_cache_or_gen_srf(base_path).context(ModCacheOpenSnafu)?;
 
     let check = diff_repo(&mod_cache, &remote_repo);
 
