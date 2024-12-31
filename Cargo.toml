@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Victor Chiletto <v@hnn.net.br>"]
 license = "GPL-3.0-or-later"
+repository = "https://github.com/vitorhnn/nimble/"
 
 
 [dependencies]
@@ -22,4 +23,9 @@ tempfile = "3"
 hex = "0.4"
 open = "3"
 percent-encoding = "2"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
 # tinyvec = { version = "1.5", features = ["alloc", "rustc_1_55"] }
