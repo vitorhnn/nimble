@@ -9,6 +9,7 @@ jobs:
     name: test
     env:
       RUST_BACKTRACE: 1
+      RUSTFLAGS: "-Dwarnings"
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
