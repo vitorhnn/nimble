@@ -12,6 +12,8 @@ use snafu::{ResultExt, Snafu};
 pub struct Pbo<I: BufRead + Seek> {
     pub input: I,
     pub header_len: u64,
+    // We parse this but never really use it.
+    #[allow(dead_code)]
     pub extensions: HashMap<String, String>,
     pub entries: Vec<PboEntry>,
 }
@@ -28,10 +30,14 @@ pub enum EntryType {
 pub struct PboEntry {
     pub filename: String,
     pub r#type: EntryType,
-    pub original_size: u32,
-    pub offset: u32,
-    pub timestamp: u32,
     pub data_size: u32,
+    // We parse this but never really use it.
+    #[allow(dead_code)]
+    pub original_size: u32,
+    #[allow(dead_code)]
+    pub offset: u32,
+    #[allow(dead_code)]
+    pub timestamp: u32,
 }
 
 #[derive(Debug, Snafu)]
