@@ -1,14 +1,18 @@
 use crate::mod_cache;
 use crate::mod_cache::ModCache;
-use snafu::{OptionExt, ResultExt, Snafu};
+use snafu::{ResultExt, Snafu};
 use std::cfg;
 use std::path::{Path, PathBuf};
+
+#[cfg(not(windows))]
+use snafu::OptionExt;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("failed to open ModCache: {}", source))]
     ModCacheOpen { source: mod_cache::Error },
     #[snafu(display("failed to find drive_c"))]
+    #[cfg(not(windows))]
     FailedToFindDriveC,
 }
 
